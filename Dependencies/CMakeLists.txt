@@ -15,7 +15,9 @@ add_subdirectory(BabylonNative)
 
 # Organize targets in IDE folders
 set_property(TARGET AppRuntime PROPERTY FOLDER Dependencies/BabylonNative/Core/)
-set_property(TARGET Graphics PROPERTY FOLDER Dependencies/BabylonNative/Core/)
+if(TARGET Graphics)
+    set_property(TARGET Graphics PROPERTY FOLDER Dependencies/BabylonNative/Core/)
+endif()
 set_property(TARGET JsRuntime PROPERTY FOLDER Dependencies/BabylonNative/Core/)
 set_property(TARGET ScriptLoader PROPERTY FOLDER Dependencies/BabylonNative/Core/)
 

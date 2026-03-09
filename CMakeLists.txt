@@ -7,6 +7,7 @@ add_executable(BabylonNativePlayground main.cpp)
 
 target_link_libraries(BabylonNativePlayground
     PRIVATE AppRuntime
+    PRIVATE GraphicsDevice
     PRIVATE NativeEngine
     PRIVATE NativeInput
     PRIVATE NativeOptimizations

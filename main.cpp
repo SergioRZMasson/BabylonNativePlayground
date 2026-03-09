@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <iostream>
+#include <optional>
 
 #include <Babylon/AppRuntime.h>
 #include <Babylon/Graphics/Device.h>
@@ -28,15 +29,15 @@ static constexpr int INITIAL_WIDTH = 1280;
 static constexpr int INITIAL_HEIGHT = 720;
 
 std::unique_ptr<Babylon::AppRuntime> runtime{};
-std::unique_ptr<Babylon::Graphics::Device> device{};
-std::unique_ptr<Babylon::Graphics::DeviceUpdate> update{};
+std::optional<Babylon::Graphics::Device> device{};
+std::optional<Babylon::Graphics::DeviceUpdate> update{};
 Babylon::Plugins::NativeInput* nativeInput{};
 std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
 
-static void* GetNativeWindowHandle(GLFWwindow* window)
+static Babylon::Graphics::WindowT GetNativeWindowHandle(GLFWwindow* window)
 {
 #if TARGET_PLATFORM_LINUX
-    return (void*)(uintptr_t)glfwGetX11Window(window);
+    return glfwGetX11Window(window);
 #elif TARGET_PLATFORM_OSX
     return ((NSWindow*)glfwGetCocoaWindow(window)).contentView;
 #elif TARGET_PLATFORM_WINDOWS
@@ -66,14 +67,14 @@ void Initialize(GLFWwindow* window)
     int width, height;
     glfwGetWindowSize(window, &width, &height);
 
-    Babylon::Graphics::WindowConfiguration graphicsConfig{};
-    graphicsConfig.Window = (Babylon::Graphics::WindowType)GetNativeWindowHandle(window);
+    Babylon::Graphics::Configuration graphicsConfig{};
+    graphicsConfig.Window = GetNativeWindowHandle(window);
     graphicsConfig.Width = width;
     graphicsConfig.Height = height;
     graphicsConfig.MSAASamples = 4;
 
-    device = Babylon::Graphics::Device::Create(graphicsConfig);
-    update = std::make_unique<Babylon::Graphics::DeviceUpdate>(device->GetUpdate("update"));
+    device.emplace(graphicsConfig);
+    update.emplace(device->GetUpdate("update"));
     device->StartRenderingCurrentFrame();
     update->Start();
 
