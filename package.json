@@ -1,0 +1,11 @@
+{
+  "name": "babylon-native-playground",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Simple Babylon Native + GLFW playground application",
+  "dependencies": {
+    "babylonjs": "^7.0.0",
+    "babylonjs-loaders": "^7.0.0",
+    "babylonjs-materials": "^7.0.0"
+  }
+}

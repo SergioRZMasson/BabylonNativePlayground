@@ -1,0 +1,74 @@
+name: Build
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Configure CMake
+        run: cmake -S . -B build -G "Visual Studio 17 2022"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Configure CMake
+        run: cmake -S . -B build -G "Xcode"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxi-dev libxcursor-dev libxinerama-dev libxrandr-dev \
+            libgl1-mesa-dev libcurl4-openssl-dev ninja-build libv8-dev
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Configure CMake
+        run: cmake -S . -B build -G Ninja -DNAPI_JAVASCRIPT_ENGINE=V8
+
+      - name: Build
+        run: cmake --build build
