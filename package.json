@@ -2,10 +2,10 @@
   "name": "babylon-native-playground",
   "version": "0.1.0",
   "private": true,
-  "description": "Simple Babylon Native + GLFW playground application",
+  "description": "Babylon Native + Qt playground application (vcpkg managed)",
   "dependencies": {
-    "babylonjs": "^7.0.0",
-    "babylonjs-loaders": "^7.0.0",
-    "babylonjs-materials": "^7.0.0"
+    "babylonjs": "^8.53.0",
+    "babylonjs-loaders": "^8.53.0",
+    "babylonjs-materials": "^8.53.0"
   }
 }

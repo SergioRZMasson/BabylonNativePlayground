@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(BabylonNativePlayground VERSION 0.1.0)
 
+# ---- Qt 6 (provided by vcpkg) ----
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
 add_subdirectory(Dependencies)
 
 add_executable(BabylonNativePlayground main.cpp)
@@ -16,7 +20,7 @@ target_link_libraries(BabylonNativePlayground
     PRIVATE ScriptLoader
     PRIVATE XMLHttpRequest
     PRIVATE Canvas
-    PRIVATE glfw
+    PRIVATE Qt6::Widgets
     ${ADDITIONAL_LIBRARIES}
     ${BABYLON_NATIVE_PLAYGROUND_EXTENSION_LIBRARIES})
 
@@ -65,4 +69,36 @@ elseif(APPLE)
         "-framework CoreGraphics")
 else()
     target_compile_definitions(BabylonNativePlayground PRIVATE TARGET_PLATFORM_LINUX)
+endif()
+
+# Deploy Qt runtime DLLs and plugins next to the executable on every build.
+# Without this, Qt will assert / crash because it cannot find the platform
+# plugin (qwindows.dll) or the style plugin needed for the theme.
+# Note: vcpkg's applocal.ps1 copies regular DLLs automatically, but NOT the
+# Qt plugin sub-directories (platforms/, styles/).  We copy them ourselves.
+if(WIN32)
+    # Resolve the vcpkg Qt6 plugin directory.
+    # Qt6_DIR points to  <installed>/<triplet>/share/Qt6
+    # plugins live under <installed>/<triplet>/Qt6/plugins  (release)
+    #               and  <installed>/<triplet>/debug/Qt6/plugins  (debug)
+    cmake_path(SET _qt6_plugins_release NORMALIZE "${Qt6_DIR}/../../Qt6/plugins")
+    cmake_path(SET _qt6_plugins_debug   NORMALIZE "${Qt6_DIR}/../../debug/Qt6/plugins")
+
+    # Pick the right plugin directory for the current configuration
+    set(_qt6_plugins "$<IF:$<CONFIG:Debug>,${_qt6_plugins_debug},${_qt6_plugins_release}>")
+
+    add_custom_command(TARGET BabylonNativePlayground POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BabylonNativePlayground>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BabylonNativePlayground>/styles"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${_qt6_plugins}/platforms" "$<TARGET_FILE_DIR:BabylonNativePlayground>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${_qt6_plugins}/styles"    "$<TARGET_FILE_DIR:BabylonNativePlayground>/styles"
+        COMMENT "Copying Qt platform & style plugins..."
+    )
+
+    # Install-time deployment script for packaging
+    qt_generate_deploy_app_script(
+        TARGET BabylonNativePlayground
+        OUTPUT_SCRIPT deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR)
+    install(SCRIPT ${deploy_script})
 endif()

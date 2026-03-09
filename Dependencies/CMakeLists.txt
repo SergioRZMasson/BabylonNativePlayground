@@ -1,14 +1,3 @@
-# ---- GLFW ----
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-set(GLFW_LIBRARY_TYPE "STATIC" CACHE STRING "" FORCE)
-add_subdirectory(glfw)
-
-set_property(TARGET glfw PROPERTY FOLDER Dependencies/glfw)
-set_property(TARGET update_mappings PROPERTY FOLDER Dependencies/glfw)
-
 # ---- Babylon Native ----
 set(BABYLON_NATIVE_BUILD_APPS OFF CACHE BOOL "" FORCE)
 add_subdirectory(BabylonNative)

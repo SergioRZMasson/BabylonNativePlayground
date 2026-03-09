@@ -1,4 +1,4 @@
-#include <filesystem>
+#include <functional>
 #include <iostream>
 #include <optional>
 
@@ -13,39 +13,123 @@
 #include <Babylon/Polyfills/XMLHttpRequest.h>
 #include <Babylon/Polyfills/Canvas.h>
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
+#include <QApplication>
+#include <QMainWindow>
+#include <QWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QLabel>
+#include <QTimer>
+#include <QMenuBar>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QDockWidget>
+#include <QGroupBox>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QKeyEvent>
+#include <QMessageBox>
 
-#if TARGET_PLATFORM_LINUX
-#define GLFW_EXPOSE_NATIVE_X11
-#elif TARGET_PLATFORM_OSX
-#define GLFW_EXPOSE_NATIVE_COCOA
-#elif TARGET_PLATFORM_WINDOWS
-#define GLFW_EXPOSE_NATIVE_WIN32
-#endif
-#include <GLFW/glfw3native.h>
+// ---------------------------------------------------------------------------
+// Babylon Native globals
+// ---------------------------------------------------------------------------
+static std::unique_ptr<Babylon::AppRuntime> runtime{};
+static std::optional<Babylon::Graphics::Device> device{};
+static std::optional<Babylon::Graphics::DeviceUpdate> update{};
+static Babylon::Plugins::NativeInput* nativeInput{};
+static std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
 
-static constexpr int INITIAL_WIDTH = 1280;
-static constexpr int INITIAL_HEIGHT = 720;
-
-std::unique_ptr<Babylon::AppRuntime> runtime{};
-std::optional<Babylon::Graphics::Device> device{};
-std::optional<Babylon::Graphics::DeviceUpdate> update{};
-Babylon::Plugins::NativeInput* nativeInput{};
-std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
-
-static Babylon::Graphics::WindowT GetNativeWindowHandle(GLFWwindow* window)
+// ---------------------------------------------------------------------------
+// RenderCanvas – a QWidget that serves as the native render target.
+// Qt paints nothing on this widget; Babylon Native / bgfx renders directly
+// into the underlying platform window obtained via winId().
+// ---------------------------------------------------------------------------
+class RenderCanvas : public QWidget
 {
-#if TARGET_PLATFORM_LINUX
-    return glfwGetX11Window(window);
-#elif TARGET_PLATFORM_OSX
-    return ((NSWindow*)glfwGetCocoaWindow(window)).contentView;
-#elif TARGET_PLATFORM_WINDOWS
-    return glfwGetWin32Window(window);
-#endif
-}
+public:
+    // Callbacks wired up by the host (no Q_OBJECT / signals needed)
+    std::function<void(int, int)>               onResized;
+    std::function<void(int, int32_t, int32_t)>  onMousePressed;
+    std::function<void(int, int32_t, int32_t)>  onMouseReleased;
+    std::function<void(int32_t, int32_t)>       onMouseMoved;
+    std::function<void(int)>                    onWheelScrolled;
 
-void Uninitialize()
+    explicit RenderCanvas(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        // Ensure a real native window is created for this widget so that
+        // winId() returns a valid OS handle (HWND / XID / NSView).
+        setAttribute(Qt::WA_NativeWindow);
+        setAttribute(Qt::WA_PaintOnScreen);       // skip Qt painting
+        setAttribute(Qt::WA_NoSystemBackground);  // avoid flicker
+        setFocusPolicy(Qt::StrongFocus);
+        setMouseTracking(true);
+        setMinimumSize(320, 240);
+    }
+
+    // Prevent Qt from painting on the widget – bgfx owns the surface.
+    QPaintEngine* paintEngine() const override { return nullptr; }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QWidget::resizeEvent(event);
+        if (onResized)
+            onResized(event->size().width(), event->size().height());
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (!onMousePressed) return;
+        int id = MapButton(event->button());
+        if (id >= 0)
+            onMousePressed(id,
+                static_cast<int32_t>(event->position().x()),
+                static_cast<int32_t>(event->position().y()));
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (!onMouseReleased) return;
+        int id = MapButton(event->button());
+        if (id >= 0)
+            onMouseReleased(id,
+                static_cast<int32_t>(event->position().x()),
+                static_cast<int32_t>(event->position().y()));
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (onMouseMoved)
+            onMouseMoved(
+                static_cast<int32_t>(event->position().x()),
+                static_cast<int32_t>(event->position().y()));
+    }
+
+    void wheelEvent(QWheelEvent* event) override
+    {
+        if (onWheelScrolled)
+            onWheelScrolled(event->angleDelta().y());
+    }
+
+private:
+    static int MapButton(Qt::MouseButton btn)
+    {
+        switch (btn)
+        {
+        case Qt::LeftButton:   return Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID;
+        case Qt::RightButton:  return Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID;
+        case Qt::MiddleButton: return Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID;
+        default:               return -1;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Babylon initialization helpers
+// ---------------------------------------------------------------------------
+static void Uninitialize()
 {
     if (device)
     {
@@ -60,17 +144,20 @@ void Uninitialize()
     device.reset();
 }
 
-void Initialize(GLFWwindow* window)
+static void Initialize(RenderCanvas* canvas)
 {
     Uninitialize();
 
-    int width, height;
-    glfwGetWindowSize(window, &width, &height);
-
     Babylon::Graphics::Configuration graphicsConfig{};
-    graphicsConfig.Window = GetNativeWindowHandle(window);
-    graphicsConfig.Width = width;
-    graphicsConfig.Height = height;
+#if TARGET_PLATFORM_WINDOWS
+    graphicsConfig.Window = reinterpret_cast<HWND>(canvas->winId());
+#elif TARGET_PLATFORM_LINUX
+    graphicsConfig.Window = static_cast<Babylon::Graphics::WindowT>(canvas->winId());
+#elif TARGET_PLATFORM_OSX
+    graphicsConfig.Window = reinterpret_cast<Babylon::Graphics::WindowT>(canvas->winId());
+#endif
+    graphicsConfig.Width  = static_cast<size_t>(canvas->width());
+    graphicsConfig.Height = static_cast<size_t>(canvas->height());
     graphicsConfig.MSAASamples = 4;
 
     device.emplace(graphicsConfig);
@@ -90,7 +177,8 @@ void Initialize(GLFWwindow* window)
 
         Babylon::Polyfills::Window::Initialize(env);
         Babylon::Polyfills::XMLHttpRequest::Initialize(env);
-        nativeCanvas = std::make_unique<Babylon::Polyfills::Canvas>(Babylon::Polyfills::Canvas::Initialize(env));
+        nativeCanvas = std::make_unique<Babylon::Polyfills::Canvas>(
+            Babylon::Polyfills::Canvas::Initialize(env));
         Babylon::Plugins::NativeEngine::Initialize(env);
         Babylon::Plugins::NativeOptimizations::Initialize(env);
         nativeInput = &Babylon::Plugins::NativeInput::CreateForJavaScript(env);
@@ -104,79 +192,137 @@ void Initialize(GLFWwindow* window)
     loader.LoadScript("app:///Scripts/game.js");
 }
 
-// --- GLFW callbacks ---
-
-static void KeyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/)
+// ---------------------------------------------------------------------------
+// main – builds the Qt UI and starts the Babylon render loop
+// ---------------------------------------------------------------------------
+int main(int argc, char* argv[])
 {
-    if (key == GLFW_KEY_R && action == GLFW_PRESS)
+    QApplication app(argc, argv);
+    app.setApplicationName("Babylon Native Playground");
+    app.setOrganizationName("BabylonNative");
+
+    // ---- Main window -------------------------------------------------------
+    QMainWindow mainWindow;
+    mainWindow.setWindowTitle("Babylon Native Playground");
+    mainWindow.resize(1280, 720);
+
+    // ---- Menu bar ----------------------------------------------------------
+    QMenu* fileMenu  = mainWindow.menuBar()->addMenu("&File");
+    QAction* exitAct = fileMenu->addAction("E&xit");
+    QObject::connect(exitAct, &QAction::triggered, &app, &QApplication::quit);
+
+    QMenu* sceneMenu   = mainWindow.menuBar()->addMenu("&Scene");
+    QAction* resetAct  = sceneMenu->addAction("&Reset Scene");
+
+    QMenu* helpMenu    = mainWindow.menuBar()->addMenu("&Help");
+    QAction* aboutAct  = helpMenu->addAction("&About");
+
+    // ---- Toolbar -----------------------------------------------------------
+    QToolBar* toolbar = mainWindow.addToolBar("Main");
+    toolbar->setMovable(false);
+    toolbar->addAction(resetAct);   // shared with menu
+
+    // ---- Central widget: the render canvas ---------------------------------
+    auto* centralWidget = new QWidget();
+    auto* centralLayout = new QVBoxLayout(centralWidget);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* canvas = new RenderCanvas();
+    centralLayout->addWidget(canvas);
+    mainWindow.setCentralWidget(centralWidget);
+
+    // ---- Left dock: property / info panel ----------------------------------
+    auto* propsDock = new QDockWidget("Properties", &mainWindow);
+    propsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    propsDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+
+    auto* propsWidget = new QWidget();
+    auto* propsLayout = new QVBoxLayout(propsWidget);
+
+    auto* sceneGroup  = new QGroupBox("Scene");
+    auto* sceneLayout = new QVBoxLayout(sceneGroup);
+    sceneLayout->addWidget(new QLabel("Babylon Native Playground"));
+    sceneLayout->addWidget(new QLabel("Qt Edition"));
+    propsLayout->addWidget(sceneGroup);
+
+    auto* controlsGroup  = new QGroupBox("Controls");
+    auto* controlsLayout = new QVBoxLayout(controlsGroup);
+    controlsLayout->addWidget(new QLabel("Left Mouse: Rotate"));
+    controlsLayout->addWidget(new QLabel("Right Mouse: Pan"));
+    controlsLayout->addWidget(new QLabel("Scroll: Zoom"));
+    propsLayout->addWidget(controlsGroup);
+
+    propsLayout->addStretch();
+    propsDock->setWidget(propsWidget);
+    mainWindow.addDockWidget(Qt::LeftDockWidgetArea, propsDock);
+
+    // ---- Status bar --------------------------------------------------------
+    mainWindow.statusBar()->showMessage("Ready");
+
+    // ---- Wire canvas events to Babylon Native ------------------------------
+    canvas->onResized = [](int w, int h)
     {
-        Initialize(window);
-    }
-}
+        if (device)
+            device->UpdateSize(static_cast<size_t>(w), static_cast<size_t>(h));
+    };
 
-static void MouseButtonCallback(GLFWwindow* window, int button, int action, int /*mods*/)
-{
-    double xpos, ypos;
-    glfwGetCursorPos(window, &xpos, &ypos);
-    int32_t x = static_cast<int32_t>(xpos);
-    int32_t y = static_cast<int32_t>(ypos);
-
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
-        nativeInput->MouseDown(Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID, x, y);
-    else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
-        nativeInput->MouseUp(Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID, x, y);
-    else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS)
-        nativeInput->MouseDown(Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID, x, y);
-    else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE)
-        nativeInput->MouseUp(Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID, x, y);
-    else if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS)
-        nativeInput->MouseDown(Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID, x, y);
-    else if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_RELEASE)
-        nativeInput->MouseUp(Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID, x, y);
-}
-
-static void CursorPositionCallback(GLFWwindow* /*window*/, double xpos, double ypos)
-{
-    nativeInput->MouseMove(static_cast<int32_t>(xpos), static_cast<int32_t>(ypos));
-}
-
-static void ScrollCallback(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset)
-{
-    nativeInput->MouseWheel(Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID, static_cast<int>(-yoffset * 100.0));
-}
-
-static void WindowSizeCallback(GLFWwindow* /*window*/, int width, int height)
-{
-    device->UpdateSize(width, height);
-}
-
-int main()
-{
-    if (!glfwInit())
+    canvas->onMousePressed = [](int buttonId, int32_t x, int32_t y)
     {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        return EXIT_FAILURE;
-    }
+        if (nativeInput)
+            nativeInput->MouseDown(buttonId, x, y);
+    };
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-    GLFWwindow* window = glfwCreateWindow(INITIAL_WIDTH, INITIAL_HEIGHT, "Babylon Native Playground", nullptr, nullptr);
-    if (!window)
+    canvas->onMouseReleased = [](int buttonId, int32_t x, int32_t y)
     {
-        std::cerr << "Failed to create GLFW window" << std::endl;
-        glfwTerminate();
-        return EXIT_FAILURE;
-    }
+        if (nativeInput)
+            nativeInput->MouseUp(buttonId, x, y);
+    };
 
-    glfwSetKeyCallback(window, KeyCallback);
-    glfwSetWindowSizeCallback(window, WindowSizeCallback);
-    glfwSetCursorPosCallback(window, CursorPositionCallback);
-    glfwSetMouseButtonCallback(window, MouseButtonCallback);
-    glfwSetScrollCallback(window, ScrollCallback);
+    canvas->onMouseMoved = [](int32_t x, int32_t y)
+    {
+        if (nativeInput)
+            nativeInput->MouseMove(x, y);
+    };
 
-    Initialize(window);
+    canvas->onWheelScrolled = [](int angleDelta)
+    {
+        if (nativeInput)
+        {
+            // Qt gives ±120 per wheel notch; scale to match GLFW-style ±100
+            int scaled = static_cast<int>(-angleDelta * 100.0 / 120.0);
+            nativeInput->MouseWheel(
+                Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID, scaled);
+        }
+    };
 
-    while (!glfwWindowShouldClose(window))
+    // ---- Menu / toolbar actions --------------------------------------------
+    auto resetScene = [canvas, &mainWindow]()
+    {
+        Initialize(canvas);
+        mainWindow.statusBar()->showMessage("Scene reset");
+    };
+
+    QObject::connect(resetAct, &QAction::triggered, resetScene);
+
+    QObject::connect(aboutAct, &QAction::triggered, [&mainWindow]()
+    {
+        QMessageBox::about(&mainWindow, "About",
+            "Babylon Native Playground\n"
+            "Qt Edition\n\n"
+            "A sample application embedding a Babylon.js 3-D "
+            "scene inside a Qt window.");
+    });
+
+    // ---- Show the window then initialise Babylon ---------------------------
+    mainWindow.show();
+
+    // Use a single-shot timer so the native window handle is fully realised
+    // before we hand it to bgfx / Babylon.
+    QTimer::singleShot(0, [canvas]() { Initialize(canvas); });
+
+    // ---- Render loop (≈60 fps) via QTimer ----------------------------------
+    QTimer renderTimer;
+    QObject::connect(&renderTimer, &QTimer::timeout, []()
     {
         if (device)
         {
@@ -185,12 +331,12 @@ int main()
             device->StartRenderingCurrentFrame();
             update->Start();
         }
-        glfwPollEvents();
-    }
+    });
+    renderTimer.start(16);
+
+    // ---- Run ---------------------------------------------------------------
+    int result = app.exec();
 
     Uninitialize();
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    return EXIT_SUCCESS;
+    return result;
 }
