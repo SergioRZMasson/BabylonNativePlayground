@@ -1,3 +1,12 @@
+# ---- SDL3 ----
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(SDL)
+set_property(TARGET SDL3-static PROPERTY FOLDER Dependencies/SDL)
+
 # ---- Babylon Native ----
 set(BABYLON_NATIVE_BUILD_APPS OFF CACHE BOOL "" FORCE)
 add_subdirectory(BabylonNative)
@@ -37,3 +46,7 @@ endif()
 if(TARGET Canvas)
     set_property(TARGET Canvas PROPERTY FOLDER Dependencies/BabylonNative/Polyfills/)
 endif()
+
+# ---- ImGui ----
+add_subdirectory(imgui)
+set_property(TARGET imgui PROPERTY FOLDER Dependencies/)

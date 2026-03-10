@@ -1,6 +1,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <string>
 
 #include <Babylon/AppRuntime.h>
 #include <Babylon/Graphics/Device.h>
@@ -13,23 +14,12 @@
 #include <Babylon/Polyfills/XMLHttpRequest.h>
 #include <Babylon/Polyfills/Canvas.h>
 
-#include <QApplication>
-#include <QMainWindow>
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QPushButton>
-#include <QLabel>
-#include <QTimer>
-#include <QMenuBar>
-#include <QStatusBar>
-#include <QToolBar>
-#include <QDockWidget>
-#include <QGroupBox>
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QKeyEvent>
-#include <QMessageBox>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+
+#include "imgui.h"
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_babylon.h"
 
 // ---------------------------------------------------------------------------
 // Babylon Native globals
@@ -40,91 +30,45 @@ static std::optional<Babylon::Graphics::DeviceUpdate> update{};
 static Babylon::Plugins::NativeInput* nativeInput{};
 static std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
 
+static bool s_showImgui = true;
+
 // ---------------------------------------------------------------------------
-// RenderCanvas – a QWidget that serves as the native render target.
-// Qt paints nothing on this widget; Babylon Native / bgfx renders directly
-// into the underlying platform window obtained via winId().
+// Get native window handle from SDL
 // ---------------------------------------------------------------------------
-class RenderCanvas : public QWidget
+static void* GetNativeWindowHandle(SDL_Window* window)
 {
-public:
-    // Callbacks wired up by the host (no Q_OBJECT / signals needed)
-    std::function<void(int, int)>               onResized;
-    std::function<void(int, int32_t, int32_t)>  onMousePressed;
-    std::function<void(int, int32_t, int32_t)>  onMouseReleased;
-    std::function<void(int32_t, int32_t)>       onMouseMoved;
-    std::function<void(int)>                    onWheelScrolled;
+#if TARGET_PLATFORM_WINDOWS
+    return (void*)SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+#elif TARGET_PLATFORM_LINUX
+    return (void*)(uintptr_t)SDL_GetNumberProperty(
+        SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+#elif TARGET_PLATFORM_OSX
+    return SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+#else
+    return nullptr;
+#endif
+}
 
-    explicit RenderCanvas(QWidget* parent = nullptr)
-        : QWidget(parent)
+// ---------------------------------------------------------------------------
+// Send playground hash to JS
+// ---------------------------------------------------------------------------
+static void LoadPlayground(const std::string& hash)
+{
+    if (!runtime) return;
+    runtime->Dispatch([hash](Napi::Env env)
     {
-        // Ensure a real native window is created for this widget so that
-        // winId() returns a valid OS handle (HWND / XID / NSView).
-        setAttribute(Qt::WA_NativeWindow);
-        setAttribute(Qt::WA_PaintOnScreen);       // skip Qt painting
-        setAttribute(Qt::WA_NoSystemBackground);  // avoid flicker
-        setFocusPolicy(Qt::StrongFocus);
-        setMouseTracking(true);
-        setMinimumSize(320, 240);
-    }
-
-    // Prevent Qt from painting on the widget – bgfx owns the surface.
-    QPaintEngine* paintEngine() const override { return nullptr; }
-
-protected:
-    void resizeEvent(QResizeEvent* event) override
-    {
-        QWidget::resizeEvent(event);
-        if (onResized)
-            onResized(event->size().width(), event->size().height());
-    }
-
-    void mousePressEvent(QMouseEvent* event) override
-    {
-        if (!onMousePressed) return;
-        int id = MapButton(event->button());
-        if (id >= 0)
-            onMousePressed(id,
-                static_cast<int32_t>(event->position().x()),
-                static_cast<int32_t>(event->position().y()));
-    }
-
-    void mouseReleaseEvent(QMouseEvent* event) override
-    {
-        if (!onMouseReleased) return;
-        int id = MapButton(event->button());
-        if (id >= 0)
-            onMouseReleased(id,
-                static_cast<int32_t>(event->position().x()),
-                static_cast<int32_t>(event->position().y()));
-    }
-
-    void mouseMoveEvent(QMouseEvent* event) override
-    {
-        if (onMouseMoved)
-            onMouseMoved(
-                static_cast<int32_t>(event->position().x()),
-                static_cast<int32_t>(event->position().y()));
-    }
-
-    void wheelEvent(QWheelEvent* event) override
-    {
-        if (onWheelScrolled)
-            onWheelScrolled(event->angleDelta().y());
-    }
-
-private:
-    static int MapButton(Qt::MouseButton btn)
-    {
-        switch (btn)
+        auto fn = env.Global().Get("LoadPlayground");
+        if (fn.IsFunction())
         {
-        case Qt::LeftButton:   return Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID;
-        case Qt::RightButton:  return Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID;
-        case Qt::MiddleButton: return Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID;
-        default:               return -1;
+            fn.As<Napi::Function>().Call({Napi::String::New(env, hash)});
         }
-    }
-};
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Babylon initialization helpers
@@ -135,6 +79,7 @@ static void Uninitialize()
     {
         update->Finish();
         device->FinishRenderingCurrentFrame();
+        ImGui_ImplBabylon_Shutdown();
     }
 
     nativeInput = {};
@@ -144,20 +89,17 @@ static void Uninitialize()
     device.reset();
 }
 
-static void Initialize(RenderCanvas* canvas)
+static void Initialize(SDL_Window* window)
 {
     Uninitialize();
 
+    int width, height;
+    SDL_GetWindowSize(window, &width, &height);
+
     Babylon::Graphics::Configuration graphicsConfig{};
-#if TARGET_PLATFORM_WINDOWS
-    graphicsConfig.Window = reinterpret_cast<HWND>(canvas->winId());
-#elif TARGET_PLATFORM_LINUX
-    graphicsConfig.Window = static_cast<Babylon::Graphics::WindowT>(canvas->winId());
-#elif TARGET_PLATFORM_OSX
-    graphicsConfig.Window = reinterpret_cast<Babylon::Graphics::WindowT>(canvas->winId());
-#endif
-    graphicsConfig.Width  = static_cast<size_t>(canvas->width());
-    graphicsConfig.Height = static_cast<size_t>(canvas->height());
+    graphicsConfig.Window = reinterpret_cast<Babylon::Graphics::WindowT>(GetNativeWindowHandle(window));
+    graphicsConfig.Width  = static_cast<size_t>(width);
+    graphicsConfig.Height = static_cast<size_t>(height);
     graphicsConfig.MSAASamples = 4;
 
     device.emplace(graphicsConfig);
@@ -182,6 +124,9 @@ static void Initialize(RenderCanvas* canvas)
         Babylon::Plugins::NativeEngine::Initialize(env);
         Babylon::Plugins::NativeOptimizations::Initialize(env);
         nativeInput = &Babylon::Plugins::NativeInput::CreateForJavaScript(env);
+
+        auto context = &Babylon::Graphics::DeviceContext::GetFromJavaScript(env);
+        ImGui_ImplBabylon_SetContext(context);
     });
 
     Babylon::ScriptLoader loader{*runtime};
@@ -190,140 +135,127 @@ static void Initialize(RenderCanvas* canvas)
     loader.LoadScript("app:///Scripts/babylonjs.loaders.js");
     loader.LoadScript("app:///Scripts/babylonjs.materials.js");
     loader.LoadScript("app:///Scripts/game.js");
+
+    ImGui_ImplBabylon_Init(width, height);
 }
 
 // ---------------------------------------------------------------------------
-// main – builds the Qt UI and starts the Babylon render loop
+// Map SDL mouse button to Babylon Native input ID
+// ---------------------------------------------------------------------------
+static int MapMouseButton(Uint8 button)
+{
+    switch (button)
+    {
+    case SDL_BUTTON_LEFT:   return Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID;
+    case SDL_BUTTON_RIGHT:  return Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID;
+    case SDL_BUTTON_MIDDLE: return Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID;
+    default:                return -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// main
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    QApplication app(argc, argv);
-    app.setApplicationName("Babylon Native Playground");
-    app.setOrganizationName("BabylonNative");
-
-    // ---- Main window -------------------------------------------------------
-    QMainWindow mainWindow;
-    mainWindow.setWindowTitle("Babylon Native Playground");
-    mainWindow.resize(1280, 720);
-
-    // ---- Menu bar ----------------------------------------------------------
-    QMenu* fileMenu  = mainWindow.menuBar()->addMenu("&File");
-    QAction* exitAct = fileMenu->addAction("E&xit");
-    QObject::connect(exitAct, &QAction::triggered, &app, &QApplication::quit);
-
-    QMenu* sceneMenu   = mainWindow.menuBar()->addMenu("&Scene");
-    QAction* resetAct  = sceneMenu->addAction("&Reset Scene");
-
-    QMenu* helpMenu    = mainWindow.menuBar()->addMenu("&Help");
-    QAction* aboutAct  = helpMenu->addAction("&About");
-
-    // ---- Toolbar -----------------------------------------------------------
-    QToolBar* toolbar = mainWindow.addToolBar("Main");
-    toolbar->setMovable(false);
-    toolbar->addAction(resetAct);   // shared with menu
-
-    // ---- Central widget: the render canvas ---------------------------------
-    auto* centralWidget = new QWidget();
-    auto* centralLayout = new QVBoxLayout(centralWidget);
-    centralLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* canvas = new RenderCanvas();
-    centralLayout->addWidget(canvas);
-    mainWindow.setCentralWidget(centralWidget);
-
-    // ---- Left dock: property / info panel ----------------------------------
-    auto* propsDock = new QDockWidget("Properties", &mainWindow);
-    propsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    propsDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-
-    auto* propsWidget = new QWidget();
-    auto* propsLayout = new QVBoxLayout(propsWidget);
-
-    auto* sceneGroup  = new QGroupBox("Scene");
-    auto* sceneLayout = new QVBoxLayout(sceneGroup);
-    sceneLayout->addWidget(new QLabel("Babylon Native Playground"));
-    sceneLayout->addWidget(new QLabel("Qt Edition"));
-    propsLayout->addWidget(sceneGroup);
-
-    auto* controlsGroup  = new QGroupBox("Controls");
-    auto* controlsLayout = new QVBoxLayout(controlsGroup);
-    controlsLayout->addWidget(new QLabel("Left Mouse: Rotate"));
-    controlsLayout->addWidget(new QLabel("Right Mouse: Pan"));
-    controlsLayout->addWidget(new QLabel("Scroll: Zoom"));
-    propsLayout->addWidget(controlsGroup);
-
-    propsLayout->addStretch();
-    propsDock->setWidget(propsWidget);
-    mainWindow.addDockWidget(Qt::LeftDockWidgetArea, propsDock);
-
-    // ---- Status bar --------------------------------------------------------
-    mainWindow.statusBar()->showMessage("Ready");
-
-    // ---- Wire canvas events to Babylon Native ------------------------------
-    canvas->onResized = [](int w, int h)
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
-        if (device)
-            device->UpdateSize(static_cast<size_t>(w), static_cast<size_t>(h));
-    };
+        std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
+        return 1;
+    }
 
-    canvas->onMousePressed = [](int buttonId, int32_t x, int32_t y)
-    {
-        if (nativeInput)
-            nativeInput->MouseDown(buttonId, x, y);
-    };
+    SDL_Window* window = SDL_CreateWindow(
+        "Babylon Native Playground",
+        1280, 720,
+        SDL_WINDOW_RESIZABLE);
 
-    canvas->onMouseReleased = [](int buttonId, int32_t x, int32_t y)
+    if (!window)
     {
-        if (nativeInput)
-            nativeInput->MouseUp(buttonId, x, y);
-    };
+        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+        return 1;
+    }
 
-    canvas->onMouseMoved = [](int32_t x, int32_t y)
-    {
-        if (nativeInput)
-            nativeInput->MouseMove(x, y);
-    };
+    // Setup ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGui::StyleColorsDark();
 
-    canvas->onWheelScrolled = [](int angleDelta)
+    ImGui_ImplSDL3_InitForOther(window);
+
+    // Initialize Babylon
+    Initialize(window);
+
+    // Playground hash input buffer
+    static char hashBuf[256] = "";
+
+    bool running = true;
+    while (running)
     {
-        if (nativeInput)
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
         {
-            // Qt gives ±120 per wheel notch; scale to match GLFW-style ±100
-            int scaled = static_cast<int>(-angleDelta * 100.0 / 120.0);
-            nativeInput->MouseWheel(
-                Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID, scaled);
+            ImGui_ImplSDL3_ProcessEvent(&event);
+
+            switch (event.type)
+            {
+            case SDL_EVENT_QUIT:
+                running = false;
+                break;
+
+            case SDL_EVENT_WINDOW_RESIZED:
+                if (device)
+                    device->UpdateSize(event.window.data1, event.window.data2);
+                break;
+
+            case SDL_EVENT_KEY_DOWN:
+                if (event.key.key == SDLK_F1)
+                    s_showImgui = !s_showImgui;
+                if (event.key.key == SDLK_R && (event.key.mod & SDL_KMOD_CTRL))
+                    Initialize(window);
+                break;
+
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (!io.WantCaptureMouse && nativeInput)
+                {
+                    int id = MapMouseButton(event.button.button);
+                    if (id >= 0)
+                        nativeInput->MouseDown(id,
+                            static_cast<int32_t>(event.button.x),
+                            static_cast<int32_t>(event.button.y));
+                }
+                break;
+
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (!io.WantCaptureMouse && nativeInput)
+                {
+                    int id = MapMouseButton(event.button.button);
+                    if (id >= 0)
+                        nativeInput->MouseUp(id,
+                            static_cast<int32_t>(event.button.x),
+                            static_cast<int32_t>(event.button.y));
+                }
+                break;
+
+            case SDL_EVENT_MOUSE_MOTION:
+                if (!io.WantCaptureMouse && nativeInput)
+                    nativeInput->MouseMove(
+                        static_cast<int32_t>(event.motion.x),
+                        static_cast<int32_t>(event.motion.y));
+                break;
+
+            case SDL_EVENT_MOUSE_WHEEL:
+                if (!io.WantCaptureMouse && nativeInput)
+                    nativeInput->MouseWheel(
+                        Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID,
+                        static_cast<int>(-event.wheel.y * 100.0f));
+                break;
+            }
         }
-    };
 
-    // ---- Menu / toolbar actions --------------------------------------------
-    auto resetScene = [canvas, &mainWindow]()
-    {
-        Initialize(canvas);
-        mainWindow.statusBar()->showMessage("Scene reset");
-    };
-
-    QObject::connect(resetAct, &QAction::triggered, resetScene);
-
-    QObject::connect(aboutAct, &QAction::triggered, [&mainWindow]()
-    {
-        QMessageBox::about(&mainWindow, "About",
-            "Babylon Native Playground\n"
-            "Qt Edition\n\n"
-            "A sample application embedding a Babylon.js 3-D "
-            "scene inside a Qt window.");
-    });
-
-    // ---- Show the window then initialise Babylon ---------------------------
-    mainWindow.show();
-
-    // Use a single-shot timer so the native window handle is fully realised
-    // before we hand it to bgfx / Babylon.
-    QTimer::singleShot(0, [canvas]() { Initialize(canvas); });
-
-    // ---- Render loop (≈60 fps) via QTimer ----------------------------------
-    QTimer renderTimer;
-    QObject::connect(&renderTimer, &QTimer::timeout, []()
-    {
+        // Render Babylon frame
         if (device)
         {
             update->Finish();
@@ -331,12 +263,46 @@ int main(int argc, char* argv[])
             device->StartRenderingCurrentFrame();
             update->Start();
         }
-    });
-    renderTimer.start(16);
 
-    // ---- Run ---------------------------------------------------------------
-    int result = app.exec();
+        // ImGui frame
+        if (s_showImgui)
+        {
+            ImGui_ImplBabylon_NewFrame();
+            ImGui_ImplSDL3_NewFrame();
+            ImGui::NewFrame();
+
+            ImGui::Begin("Babylon Native Playground");
+            ImGui::Text("Enter a Babylon.js playground hash:");
+            ImGui::InputText("##hash", hashBuf, sizeof(hashBuf));
+            ImGui::SameLine();
+            if (ImGui::Button("Load"))
+            {
+                std::string hash(hashBuf);
+                if (!hash.empty())
+                    LoadPlayground(hash);
+            }
+            ImGui::Separator();
+            ImGui::Text("Controls:");
+            ImGui::BulletText("Left Mouse: Rotate");
+            ImGui::BulletText("Right Mouse: Pan");
+            ImGui::BulletText("Scroll: Zoom");
+            ImGui::BulletText("F1: Toggle this panel");
+            ImGui::BulletText("Ctrl+R: Reset scene");
+            ImGui::Separator();
+            ImGui::Text("%.1f FPS", io.Framerate);
+            ImGui::End();
+
+            ImGui::Render();
+            ImGui_ImplBabylon_RenderDrawData(ImGui::GetDrawData());
+        }
+    }
 
     Uninitialize();
-    return result;
+
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 0;
 }
