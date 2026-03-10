@@ -71,6 +71,22 @@ static void LoadPlayground(const std::string& hash)
 }
 
 // ---------------------------------------------------------------------------
+// Send raw playground code to JS
+// ---------------------------------------------------------------------------
+static void RunPlaygroundCode(const std::string& code)
+{
+    if (!runtime) return;
+    runtime->Dispatch([code](Napi::Env env)
+    {
+        auto fn = env.Global().Get("RunPlaygroundCode");
+        if (fn.IsFunction())
+        {
+            fn.As<Napi::Function>().Call({Napi::String::New(env, code)});
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Babylon initialization helpers
 // ---------------------------------------------------------------------------
 static void Uninitialize()
@@ -191,6 +207,38 @@ int main(int argc, char* argv[])
     // Playground hash input buffer
     static char hashBuf[256] = "";
 
+    // Code editor buffer with a default createScene template
+    static const char* defaultCode =
+        "var createScene = function (engine) {\n"
+        "    var scene = new BABYLON.Scene(engine);\n"
+        "    scene.createDefaultCamera(true, true, true);\n"
+        "    var camera = scene.activeCamera;\n"
+        "    camera.setTarget(BABYLON.Vector3.Zero());\n"
+        "    camera.position = new BABYLON.Vector3(0, 5, -10);\n"
+        "\n"
+        "    var light = new BABYLON.HemisphericLight(\n"
+        "        \"light\", new BABYLON.Vector3(0, 1, 0), scene);\n"
+        "    light.intensity = 0.7;\n"
+        "\n"
+        "    var sphere = BABYLON.MeshBuilder.CreateSphere(\n"
+        "        \"sphere\", { diameter: 2, segments: 32 }, scene);\n"
+        "    sphere.position.y = 1;\n"
+        "\n"
+        "    BABYLON.MeshBuilder.CreateGround(\n"
+        "        \"ground\", { width: 6, height: 6 }, scene);\n"
+        "\n"
+        "    return scene;\n"
+        "};\n";
+
+    static constexpr size_t CODE_BUF_SIZE = 64 * 1024;
+    static char codeBuf[CODE_BUF_SIZE];
+    static bool codeInitialized = false;
+    if (!codeInitialized)
+    {
+        snprintf(codeBuf, CODE_BUF_SIZE, "%s", defaultCode);
+        codeInitialized = true;
+    }
+
     bool running = true;
     while (running)
     {
@@ -272,7 +320,9 @@ int main(int argc, char* argv[])
             ImGui::NewFrame();
 
             ImGui::Begin("Babylon Native Playground");
-            ImGui::Text("Enter a Babylon.js playground hash:");
+
+            // --- Load from hash ---
+            ImGui::Text("Load from Playground Hash:");
             ImGui::InputText("##hash", hashBuf, sizeof(hashBuf));
             ImGui::SameLine();
             if (ImGui::Button("Load"))
@@ -281,15 +331,29 @@ int main(int argc, char* argv[])
                 if (!hash.empty())
                     LoadPlayground(hash);
             }
+
             ImGui::Separator();
-            ImGui::Text("Controls:");
-            ImGui::BulletText("Left Mouse: Rotate");
-            ImGui::BulletText("Right Mouse: Pan");
-            ImGui::BulletText("Scroll: Zoom");
-            ImGui::BulletText("F1: Toggle this panel");
-            ImGui::BulletText("Ctrl+R: Reset scene");
-            ImGui::Separator();
+
+            // --- Code editor ---
+            ImGui::Text("Or write your own createScene code:");
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            float editorHeight = avail.y - 80.0f;
+            if (editorHeight < 100.0f) editorHeight = 100.0f;
+            ImGui::InputTextMultiline("##code", codeBuf, CODE_BUF_SIZE,
+                ImVec2(-1.0f, editorHeight),
+                ImGuiInputTextFlags_AllowTabInput);
+
+            if (ImGui::Button("Run Code"))
+            {
+                std::string code(codeBuf);
+                if (!code.empty())
+                    RunPlaygroundCode(code);
+            }
+            ImGui::SameLine();
             ImGui::Text("%.1f FPS", io.Framerate);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(F1: toggle | Ctrl+R: reset)");
+
             ImGui::End();
 
             ImGui::Render();

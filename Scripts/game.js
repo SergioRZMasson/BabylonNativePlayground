@@ -36,6 +36,45 @@ function setCurrentScene(scene) {
     currentScene = scene;
 }
 
+// Shared logic: eval playground code and set the resulting scene
+function RunPlaygroundCode(code) {
+    if (!code) return;
+
+    var pgRoot = "https://playground.babylonjs.com";
+
+    try {
+        // Fix asset URLs to point to the playground CDN
+        code = code
+            .replace(/"\/textures\//g, '"' + pgRoot + "/textures/")
+            .replace(/"textures\//g, '"' + pgRoot + "/textures/")
+            .replace(/\/scenes\//g, pgRoot + "/scenes/")
+            .replace(/"scenes\//g, '"' + pgRoot + "/scenes/")
+            .replace(/"\.\.\/\.\.https/g, '"https')
+            .replace("http://", "https://");
+
+        var canvas = window;
+        var newScene = eval(code + "\r\ncreateScene(engine)");
+
+        if (newScene && newScene.then) {
+            newScene.then(function (scene) {
+                setCurrentScene(scene);
+                console.log("Playground code executed successfully.");
+            }).catch(function (e) {
+                console.error("createScene promise rejected:");
+                console.error(e);
+            });
+        } else if (newScene) {
+            setCurrentScene(newScene);
+            console.log("Playground code executed successfully.");
+        } else {
+            console.error("createScene did not return a scene.");
+        }
+    } catch (e) {
+        console.error("Error evaluating playground code:");
+        console.error(e);
+    }
+}
+
 // Global function called from C++ via runtime->Dispatch
 function LoadPlayground(hash) {
     if (!hash) return;
@@ -49,7 +88,6 @@ function LoadPlayground(hash) {
     }
 
     var snippetUrl = "https://snippet.babylonjs.com";
-    var pgRoot = "https://playground.babylonjs.com";
 
     var retryTime = 500;
     var maxRetry = 5;
@@ -86,35 +124,10 @@ function LoadPlayground(hash) {
                         // Not a manifest, proceed as usual
                     }
 
-                    // Fix asset URLs to point to the playground CDN
-                    code = code
-                        .replace(/"\/textures\//g, '"' + pgRoot + "/textures/")
-                        .replace(/"textures\//g, '"' + pgRoot + "/textures/")
-                        .replace(/\/scenes\//g, pgRoot + "/scenes/")
-                        .replace(/"scenes\//g, '"' + pgRoot + "/scenes/")
-                        .replace(/"\.\.\/\.\.https/g, '"https')
-                        .replace("http://", "https://");
-
-                    var canvas = window;
-                    var newScene = eval(code + "\r\ncreateScene(engine)");
-
-                    if (newScene && newScene.then) {
-                        newScene.then(function (scene) {
-                            setCurrentScene(scene);
-                            console.log("Playground loaded: " + hash);
-                        }).catch(function (e) {
-                            console.error("Playground createScene promise rejected:");
-                            onError(e);
-                        });
-                    } else if (newScene) {
-                        setCurrentScene(newScene);
-                        console.log("Playground loaded: " + hash);
-                    } else {
-                        console.error("createScene did not return a scene.");
-                        onError();
-                    }
+                    RunPlaygroundCode(code);
+                    console.log("Playground loaded: " + hash);
                 } catch (e) {
-                    console.error("Error evaluating playground code:");
+                    console.error("Error loading playground:");
                     onError(e);
                 }
             }
