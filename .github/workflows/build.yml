@@ -68,13 +68,13 @@ jobs:
             libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
             libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libfribidi-dev \
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev \
-            libcurl4-openssl-dev libv8-dev
+            libcurl4-openssl-dev libjavascriptcoregtk-4.1-dev
 
       - name: Install npm dependencies
         run: npm install
 
       - name: Configure CMake
-        run: cmake -S . -B build -G Ninja -DNAPI_JAVASCRIPT_ENGINE=V8
+        run: cmake -S . -B build -G Ninja  -DNAPI_JAVASCRIPT_ENGINE=JavaScriptCore
 
       - name: Build
         run: cmake --build build
