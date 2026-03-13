@@ -47,6 +47,20 @@ if(TARGET Canvas)
     set_property(TARGET Canvas PROPERTY FOLDER Dependencies/BabylonNative/Polyfills/)
 endif()
 
+# ---- Apple Framework Workaround ----
+# BabylonNative's JsRuntimeHost creates a CMake target named "Foundation" which
+# collides with macOS's Foundation.framework. SDL3 links the framework via
+# $<LINK_LIBRARY:FRAMEWORK,Foundation>, but CMake resolves "Foundation" to the
+# JsRuntimeHost target, producing the broken flag "-framework libFoundation.a".
+# Fix by replacing the generator expression with a plain -framework flag.
+if(APPLE)
+    get_target_property(_sdl3_libs SDL3-static LINK_LIBRARIES)
+    if(_sdl3_libs)
+        string(REPLACE "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "-framework Foundation" _sdl3_libs "${_sdl3_libs}")
+        set_target_properties(SDL3-static PROPERTIES LINK_LIBRARIES "${_sdl3_libs}")
+    endif()
+endif()
+
 # ---- ImGui ----
 add_subdirectory(imgui)
 set_property(TARGET imgui PROPERTY FOLDER Dependencies/)

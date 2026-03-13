@@ -60,6 +60,7 @@ elseif(APPLE)
     target_link_libraries(BabylonNativePlayground PRIVATE ${JSCORE_LIBRARY})
     target_link_libraries(BabylonNativePlayground PRIVATE
         "-framework Cocoa"
+        "-framework Foundation"
         "-framework MetalKit"
         "-framework QuartzCore"
         "-framework CoreFoundation"
