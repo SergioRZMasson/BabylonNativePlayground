@@ -2,6 +2,8 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <mutex>
+#include <vector>
 
 #include <Babylon/AppRuntime.h>
 #include <Babylon/Graphics/Device.h>
@@ -20,6 +22,7 @@
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_babylon.h"
+#include "SceneInspector.h"
 
 // ---------------------------------------------------------------------------
 // Babylon Native globals
@@ -31,6 +34,26 @@ static Babylon::Plugins::NativeInput* nativeInput{};
 static std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
 
 static bool s_showImgui = true;
+
+static std::mutex s_sceneDataMutex;
+static std::vector<uint8_t> s_sceneDataBuffer;
+static bool s_sceneDataDirty = false;
+static SceneInspector::SceneData s_parsedSceneData;
+
+// ---------------------------------------------------------------------------
+// Native callback: receive serialized scene data from JS
+// ---------------------------------------------------------------------------
+static void NativeSetSceneData(const Napi::CallbackInfo& info)
+{
+    if (info.Length() < 1 || !info[0].IsArrayBuffer()) return;
+    auto buffer = info[0].As<Napi::ArrayBuffer>();
+    auto* data = static_cast<const uint8_t*>(buffer.Data());
+    auto size = buffer.ByteLength();
+
+    std::lock_guard<std::mutex> lock(s_sceneDataMutex);
+    s_sceneDataBuffer.assign(data, data + size);
+    s_sceneDataDirty = true;
+}
 
 // ---------------------------------------------------------------------------
 // Get native window handle from SDL
@@ -91,6 +114,13 @@ static void RunPlaygroundCode(const std::string& code)
 // ---------------------------------------------------------------------------
 static void Uninitialize()
 {
+    {
+        std::lock_guard<std::mutex> lock(s_sceneDataMutex);
+        s_sceneDataBuffer.clear();
+        s_sceneDataDirty = false;
+    }
+    s_parsedSceneData = {};
+
     if (device)
     {
         update->Finish();
@@ -140,6 +170,9 @@ static void Initialize(SDL_Window* window)
         Babylon::Plugins::NativeEngine::Initialize(env);
         Babylon::Plugins::NativeOptimizations::Initialize(env);
         nativeInput = &Babylon::Plugins::NativeInput::CreateForJavaScript(env);
+
+        env.Global().Set("_nativeSetSceneData",
+            Napi::Function::New(env, NativeSetSceneData));
 
         auto context = &Babylon::Graphics::DeviceContext::GetFromJavaScript(env);
         ImGui_ImplBabylon_SetContext(context);
@@ -355,6 +388,18 @@ int main(int argc, char* argv[])
             ImGui::TextDisabled("(F1: toggle | Ctrl+R: reset)");
 
             ImGui::End();
+
+            // Parse scene data if new data arrived from JS
+            {
+                std::lock_guard<std::mutex> lock(s_sceneDataMutex);
+                if (s_sceneDataDirty)
+                {
+                    s_parsedSceneData = SceneInspector::Parse(
+                        s_sceneDataBuffer.data(), s_sceneDataBuffer.size());
+                    s_sceneDataDirty = false;
+                }
+            }
+            SceneInspector::RenderInspector(s_parsedSceneData);
 
             ImGui::Render();
             ImGui_ImplBabylon_RenderDrawData(ImGui::GetDrawData());

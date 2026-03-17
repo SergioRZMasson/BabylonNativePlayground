@@ -3,7 +3,7 @@ project(BabylonNativePlayground VERSION 0.1.0)
 
 add_subdirectory(Dependencies)
 
-add_executable(BabylonNativePlayground main.cpp)
+add_executable(BabylonNativePlayground main.cpp SceneInspector.h)
 
 target_link_libraries(BabylonNativePlayground
     PRIVATE AppRuntime
