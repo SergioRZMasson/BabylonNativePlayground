@@ -1,9 +1,11 @@
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <mutex>
 #include <vector>
+#include <algorithm>
 
 #include <Babylon/AppRuntime.h>
 #include <Babylon/Graphics/Device.h>
@@ -158,6 +160,80 @@ static void DispatchInspectorCommands()
 }
 
 // ---------------------------------------------------------------------------
+// Load a dropped file (GLB or OBJ) and send contents to JS
+// ---------------------------------------------------------------------------
+static void LoadDroppedFile(const std::string& filePath)
+{
+    if (!runtime) return;
+
+    // Get file extension (lowercase)
+    std::string ext;
+    auto dotPos = filePath.rfind('.');
+    if (dotPos != std::string::npos)
+    {
+        ext = filePath.substr(dotPos);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
+
+    // Determine loader function name
+    std::string loaderFunc;
+    if (ext == ".glb" || ext == ".gltf")
+        loaderFunc = "load_glb";
+    else if (ext == ".obj")
+        loaderFunc = "load_obj";
+    else
+    {
+        std::cout << "Unsupported file type: " << ext << std::endl;
+        return;
+    }
+
+    // Read the file into memory
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+    if (!file.is_open())
+    {
+        std::cerr << "Failed to open file: " << filePath << std::endl;
+        return;
+    }
+
+    auto fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> fileData(static_cast<size_t>(fileSize));
+    if (!file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+    {
+        std::cerr << "Failed to read file: " << filePath << std::endl;
+        return;
+    }
+    file.close();
+
+    // Extract just the filename for display
+    std::string fileName = filePath;
+    auto slashPos = fileName.find_last_of("\\/");
+    if (slashPos != std::string::npos)
+        fileName = fileName.substr(slashPos + 1);
+
+    std::cout << "Loading dropped file: " << fileName
+              << " (" << fileData.size() << " bytes)" << std::endl;
+
+    runtime->Dispatch([data = std::move(fileData), loaderFunc, fileName](Napi::Env env)
+    {
+        auto fn = env.Global().Get(loaderFunc);
+        if (!fn.IsFunction())
+        {
+            std::cerr << "JS function " << loaderFunc << " not found" << std::endl;
+            return;
+        }
+
+        auto ab = Napi::ArrayBuffer::New(env, data.size());
+        std::memcpy(ab.Data(), data.data(), data.size());
+
+        fn.As<Napi::Function>().Call({
+            ab,
+            Napi::String::New(env, fileName)
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Babylon initialization helpers
 // ---------------------------------------------------------------------------
 static void Uninitialize()
@@ -238,6 +314,8 @@ static void Initialize(SDL_Window* window)
     loader.LoadScript("app:///Scripts/babylonjs.loaders.js");
     loader.LoadScript("app:///Scripts/babylonjs.materials.js");
     loader.LoadScript("app:///Scripts/playground.js");
+    loader.LoadScript("app:///Scripts/Loaders/loader_glb.js");
+    loader.LoadScript("app:///Scripts/Loaders/loader_obj.js");
 
     ImGui_ImplBabylon_Init(width, height);
 }
@@ -386,6 +464,14 @@ int main(int argc, char* argv[])
                     nativeInput->MouseWheel(
                         Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID,
                         static_cast<int>(-event.wheel.y * 100.0f));
+                break;
+
+            case SDL_EVENT_DROP_FILE:
+                if (event.drop.data)
+                {
+                    std::string droppedFile(event.drop.data);
+                    LoadDroppedFile(droppedFile);
+                }
                 break;
             }
         }
