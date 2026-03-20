@@ -40,6 +40,10 @@ static std::vector<uint8_t> s_sceneDataBuffer;
 static bool s_sceneDataDirty = false;
 static SceneInspector::SceneData s_parsedSceneData;
 
+// Command dispatch state
+static std::mutex s_cmdMutex;
+static std::vector<uint8_t> s_pendingCmdBuffer;
+
 // ---------------------------------------------------------------------------
 // Native callback: receive serialized scene data from JS
 // ---------------------------------------------------------------------------
@@ -110,6 +114,32 @@ static void RunPlaygroundCode(const std::string& code)
 }
 
 // ---------------------------------------------------------------------------
+// Dispatch inspector commands to JS
+// ---------------------------------------------------------------------------
+static void DispatchInspectorCommands()
+{
+    if (!runtime) return;
+
+    std::vector<uint8_t> cmdBuf;
+    {
+        std::lock_guard<std::mutex> lock(s_cmdMutex);
+        if (s_pendingCmdBuffer.empty()) return;
+        cmdBuf.swap(s_pendingCmdBuffer);
+    }
+
+    runtime->Dispatch([buf = std::move(cmdBuf)](Napi::Env env)
+    {
+        auto fn = env.Global().Get("ApplyInspectorCommands");
+        if (fn.IsFunction())
+        {
+            auto ab = Napi::ArrayBuffer::New(env, buf.size());
+            std::memcpy(ab.Data(), buf.data(), buf.size());
+            fn.As<Napi::Function>().Call({ab});
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Babylon initialization helpers
 // ---------------------------------------------------------------------------
 static void Uninitialize()
@@ -118,6 +148,10 @@ static void Uninitialize()
         std::lock_guard<std::mutex> lock(s_sceneDataMutex);
         s_sceneDataBuffer.clear();
         s_sceneDataDirty = false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_cmdMutex);
+        s_pendingCmdBuffer.clear();
     }
     s_parsedSceneData = {};
 
@@ -352,7 +386,17 @@ int main(int argc, char* argv[])
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
 
-            ImGui::Begin("Babylon Native Playground");
+            // Begin command buffer for this frame
+            SceneInspector::BeginCommands();
+
+            // Playground panel — fixed on the left side
+            float leftPanelWidth = io.DisplaySize.x * 0.2f;
+            if (leftPanelWidth < 280) leftPanelWidth = 280;
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImVec2(leftPanelWidth, io.DisplaySize.y));
+            ImGui::Begin("Babylon Native Playground", nullptr,
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse);
 
             // --- Load from hash ---
             ImGui::Text("Load from Playground Hash:");
@@ -401,8 +445,22 @@ int main(int argc, char* argv[])
             }
             SceneInspector::RenderInspector(s_parsedSceneData);
 
+            // Finalize and dispatch commands
+            SceneInspector::EndCommands();
+            if (SceneInspector::HasPendingCommands())
+            {
+                std::lock_guard<std::mutex> lock(s_cmdMutex);
+                auto* cmdData = SceneInspector::s_cmdWriter.data();
+                auto  cmdSize = SceneInspector::s_cmdWriter.size();
+                s_pendingCmdBuffer.assign(cmdData, cmdData + cmdSize);
+            }
+
             ImGui::Render();
             ImGui_ImplBabylon_RenderDrawData(ImGui::GetDrawData());
+
+            // Dispatch commands to JS after render
+            if (SceneInspector::HasPendingCommands())
+                DispatchInspectorCommands();
         }
     }
 
