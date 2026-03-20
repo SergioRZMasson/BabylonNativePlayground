@@ -1,5 +1,6 @@
 var engine = new BABYLON.NativeEngine();
 var currentScene = null;
+var _sceneInstrumentation = null;
 
 engine.getRenderingCanvas = function () {
     return window;
@@ -36,6 +37,12 @@ function setCurrentScene(scene) {
     }
     _selectedEntityUid = 0;
 
+    // Dispose previous instrumentation
+    if (_sceneInstrumentation) {
+        try { _sceneInstrumentation.dispose(); } catch (e) {}
+        _sceneInstrumentation = null;
+    }
+
     if (currentScene) {
         currentScene.dispose();
         currentScene = null;
@@ -43,6 +50,25 @@ function setCurrentScene(scene) {
     }
     currentScene = scene;
     _debugState = {};
+
+    // Create instrumentation for the new scene
+    if (scene && BABYLON.SceneInstrumentation) {
+        try {
+            _sceneInstrumentation = new BABYLON.SceneInstrumentation(scene);
+            _sceneInstrumentation.captureFrameTime = true;
+            _sceneInstrumentation.captureInterFrameTime = true;
+            _sceneInstrumentation.captureRenderTime = true;
+            _sceneInstrumentation.captureCameraRenderTime = true;
+            _sceneInstrumentation.captureActiveMeshesEvaluationTime = true;
+            _sceneInstrumentation.captureRenderTargetsRenderTime = true;
+            _sceneInstrumentation.captureParticlesRenderTime = true;
+            _sceneInstrumentation.captureSpritesRenderTime = true;
+            _sceneInstrumentation.captureAnimationsTime = true;
+            _sceneInstrumentation.capturePhysicsTime = true;
+        } catch (e) {
+            _sceneInstrumentation = null;
+        }
+    }
 }
 
 // Shared logic: eval playground code and set the resulting scene
@@ -250,38 +276,46 @@ function serializeSceneData(scene) {
     }
 
     // --- Stats ---
-    var perf = scene.getPerformanceCounter ? scene.getPerformanceCounter() : null;
     writeF32(engine.getFps ? engine.getFps() : 0);
-    var ic = scene.getInstrumentation ? scene.getInstrumentation() : null;
 
     writeU32(scene.getTotalVertices ? scene.getTotalVertices() : 0);
     writeU32(scene.getActiveIndices ? scene.getActiveIndices() : 0);
-    writeU32(scene.getActiveMeshes ? scene.getActiveMeshes().length : 0);
+
+    var activeMeshCount = 0;
+    try { activeMeshCount = scene.getActiveMeshes ? scene.getActiveMeshes().length : 0; } catch (e) {}
+    writeU32(activeMeshCount);
+
     writeU32(scene.getActiveParticles ? scene.getActiveParticles() : 0);
     writeU32(scene.getActiveBones ? scene.getActiveBones() : 0);
 
     var drawCalls = 0;
-    try { drawCalls = engine._drawCalls ? engine._drawCalls.current : 0; } catch (e) {}
+    try {
+        var dc = engine._drawCalls;
+        if (dc) drawCalls = dc.current !== undefined ? dc.current : (dc.count !== undefined ? dc.count : 0);
+    } catch (e) {}
     writeU32(drawCalls);
 
-    // Frame step durations (in ms)
-    var getCounter = function(c) {
-        if (c && c.current !== undefined) return c.current;
+    // Frame step durations (in ms) from SceneInstrumentation
+    var ic = _sceneInstrumentation;
+
+    var getCounter = function(counter) {
+        if (!counter) return 0;
+        if (counter.current !== undefined) return counter.current;
+        if (counter.lastSecAverage !== undefined) return counter.lastSecAverage;
         return 0;
     };
 
     if (ic) {
-        var counters = ic._capturedCounters || {};
-        writeF32(getCounter(ic._frameTimeCounter));
-        writeF32(getCounter(ic._interFrameTimeCounter));
-        writeF32(getCounter(ic._renderTimeCounter));
-        writeF32(getCounter(ic._cameraRenderTimeCounter));
-        writeF32(getCounter(ic._activeMeshesEvaluationTimeCounter));
-        writeF32(getCounter(ic._renderTargetsRenderTimeCounter));
-        writeF32(getCounter(ic._particlesRenderTimeCounter));
-        writeF32(getCounter(ic._spritesRenderTimeCounter));
-        writeF32(getCounter(ic._animationsTimeCounter));
-        writeF32(getCounter(ic._physicsTimeCounter));
+        writeF32(getCounter(ic.frameTimeCounter));
+        writeF32(getCounter(ic.interFrameTimeCounter));
+        writeF32(getCounter(ic.renderTimeCounter));
+        writeF32(getCounter(ic.cameraRenderTimeCounter));
+        writeF32(getCounter(ic.activeMeshesEvaluationTimeCounter));
+        writeF32(getCounter(ic.renderTargetsRenderTimeCounter));
+        writeF32(getCounter(ic.particlesRenderTimeCounter));
+        writeF32(getCounter(ic.spritesRenderTimeCounter));
+        writeF32(getCounter(ic.animationsTimeCounter));
+        writeF32(getCounter(ic.physicsTimeCounter));
     } else {
         for (var si = 0; si < 10; si++) writeF32(0);
     }
@@ -1301,6 +1335,23 @@ function _setTextureChannel(scene, channel, enabled) {
 
 // Initialize with default scene and start render loop
 currentScene = createDefaultScene();
+
+// Set up instrumentation for default scene
+if (currentScene && BABYLON.SceneInstrumentation) {
+    try {
+        _sceneInstrumentation = new BABYLON.SceneInstrumentation(currentScene);
+        _sceneInstrumentation.captureFrameTime = true;
+        _sceneInstrumentation.captureInterFrameTime = true;
+        _sceneInstrumentation.captureRenderTime = true;
+        _sceneInstrumentation.captureCameraRenderTime = true;
+        _sceneInstrumentation.captureActiveMeshesEvaluationTime = true;
+        _sceneInstrumentation.captureRenderTargetsRenderTime = true;
+        _sceneInstrumentation.captureParticlesRenderTime = true;
+        _sceneInstrumentation.captureSpritesRenderTime = true;
+        _sceneInstrumentation.captureAnimationsTime = true;
+        _sceneInstrumentation.capturePhysicsTime = true;
+    } catch (e) {}
+}
 
 var _serializeCounter = 0;
 var _SERIALIZE_INTERVAL = 10; // every ~10 frames for better responsiveness
