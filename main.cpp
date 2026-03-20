@@ -44,6 +44,24 @@ static SceneInspector::SceneData s_parsedSceneData;
 static std::mutex s_cmdMutex;
 static std::vector<uint8_t> s_pendingCmdBuffer;
 
+// Code editor sync state
+static std::mutex s_codeSyncMutex;
+static std::string s_pendingCode;
+static bool s_codeSyncDirty = false;
+
+// ---------------------------------------------------------------------------
+// Native callback: receive playground code from JS to display in editor
+// ---------------------------------------------------------------------------
+static void NativeSetPlaygroundCode(const Napi::CallbackInfo& info)
+{
+    if (info.Length() < 1 || !info[0].IsString()) return;
+    std::string code = info[0].As<Napi::String>().Utf8Value();
+
+    std::lock_guard<std::mutex> lock(s_codeSyncMutex);
+    s_pendingCode = std::move(code);
+    s_codeSyncDirty = true;
+}
+
 // ---------------------------------------------------------------------------
 // Native callback: receive serialized scene data from JS
 // ---------------------------------------------------------------------------
@@ -207,6 +225,8 @@ static void Initialize(SDL_Window* window)
 
         env.Global().Set("_nativeSetSceneData",
             Napi::Function::New(env, NativeSetSceneData));
+        env.Global().Set("_nativeSetPlaygroundCode",
+            Napi::Function::New(env, NativeSetPlaygroundCode));
 
         auto context = &Babylon::Graphics::DeviceContext::GetFromJavaScript(env);
         ImGui_ImplBabylon_SetContext(context);
@@ -410,6 +430,16 @@ int main(int argc, char* argv[])
             }
 
             ImGui::Separator();
+
+            // Sync code editor if JS sent new playground code
+            {
+                std::lock_guard<std::mutex> lock(s_codeSyncMutex);
+                if (s_codeSyncDirty)
+                {
+                    snprintf(codeBuf, CODE_BUF_SIZE, "%s", s_pendingCode.c_str());
+                    s_codeSyncDirty = false;
+                }
+            }
 
             // --- Code editor ---
             ImGui::Text("Or write your own createScene code:");

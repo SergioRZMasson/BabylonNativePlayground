@@ -41,6 +41,11 @@ function setCurrentScene(scene) {
 function RunPlaygroundCode(code) {
     if (!code) return;
 
+    // Send the code to C++ so the editor displays it
+    if (typeof _nativeSetPlaygroundCode === "function") {
+        _nativeSetPlaygroundCode(code);
+    }
+
     var pgRoot = "https://playground.babylonjs.com";
 
     try {
@@ -53,7 +58,15 @@ function RunPlaygroundCode(code) {
             .replace("http://", "https://");
 
         var canvas = window;
-        var newScene = eval(code + "\r\ncreateScene(engine)");
+
+        // Support both createScene and delayCreateScene patterns
+        var evalSuffix;
+        if (code.indexOf("delayCreateScene") !== -1) {
+            evalSuffix = "\r\ndelayCreateScene()";
+        } else {
+            evalSuffix = "\r\ncreateScene(engine)";
+        }
+        var newScene = eval(code + evalSuffix);
 
         if (newScene && newScene.then) {
             newScene.then(function (scene) {
@@ -1219,7 +1232,10 @@ var _SERIALIZE_INTERVAL = 10; // every ~10 frames for better responsiveness
 
 engine.runRenderLoop(function () {
     if (currentScene) {
-        currentScene.render();
+        // Only render when scene is ready and has an active camera
+        if (currentScene.activeCamera) {
+            currentScene.render();
+        }
 
         _serializeCounter++;
         if (_serializeCounter >= _SERIALIZE_INTERVAL) {
