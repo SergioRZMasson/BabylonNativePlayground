@@ -237,7 +237,7 @@ static void Initialize(SDL_Window* window)
     loader.LoadScript("app:///Scripts/babylon.max.js");
     loader.LoadScript("app:///Scripts/babylonjs.loaders.js");
     loader.LoadScript("app:///Scripts/babylonjs.materials.js");
-    loader.LoadScript("app:///Scripts/game.js");
+    loader.LoadScript("app:///Scripts/playground.js");
 
     ImGui_ImplBabylon_Init(width, height);
 }

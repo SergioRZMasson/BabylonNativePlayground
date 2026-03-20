@@ -133,7 +133,7 @@ ninja
 │   ├── imgui/               # Git submodule — immediate-mode UI
 │   └── CMakeLists.txt
 ├── Scripts/
-│   └── game.js              # Scene serialization, command handling, playground loader
+│   └── playground.js        # Scene serialization, command handling, playground loader
 ├── CMakeLists.txt           # Root build configuration
 ├── CMakePresets.json         # Build presets
 ├── SceneInspector.h         # ImGui inspector — parsing, tree, properties, stats, debug
