@@ -21,6 +21,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_dialog.h>
+#ifdef TARGET_PLATFORM_OSX
+#include <SDL3/SDL_metal.h>
+#endif
 
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
@@ -37,6 +40,10 @@ static Babylon::Plugins::NativeInput* nativeInput{};
 static std::unique_ptr<Babylon::Polyfills::Canvas> nativeCanvas{};
 
 static bool s_showImgui = true;
+
+#ifdef TARGET_PLATFORM_OSX
+static SDL_MetalView s_metalView{};
+#endif
 
 static std::mutex s_sceneDataMutex;
 static std::vector<uint8_t> s_sceneDataBuffer;
@@ -94,9 +101,11 @@ static void* GetNativeWindowHandle(SDL_Window* window)
         SDL_GetWindowProperties(window),
         SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 #elif TARGET_PLATFORM_OSX
-    return SDL_GetPointerProperty(
-        SDL_GetWindowProperties(window),
-        SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+    if (!s_metalView)
+    {
+        s_metalView = SDL_Metal_CreateView(window);
+    }
+    return SDL_Metal_GetLayer(s_metalView);
 #else
     return nullptr;
 #endif
@@ -360,10 +369,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    SDL_WindowFlags windowFlags = SDL_WINDOW_RESIZABLE;
+#ifdef TARGET_PLATFORM_OSX
+    windowFlags |= SDL_WINDOW_METAL;
+#endif
+
     SDL_Window* window = SDL_CreateWindow(
         "Babylon Native Playground",
         1280, 720,
-        SDL_WINDOW_RESIZABLE);
+        windowFlags);
 
     if (!window)
     {
@@ -630,6 +644,14 @@ int main(int argc, char* argv[])
 
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+
+#ifdef TARGET_PLATFORM_OSX
+    if (s_metalView)
+    {
+        SDL_Metal_DestroyView(s_metalView);
+        s_metalView = nullptr;
+    }
+#endif
 
     SDL_DestroyWindow(window);
     SDL_Quit();
