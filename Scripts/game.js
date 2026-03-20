@@ -28,6 +28,14 @@ function createDefaultScene() {
 }
 
 function setCurrentScene(scene) {
+    // Clean up highlighting before disposing
+    _highlightedMesh = null;
+    if (_highlightLayer) {
+        try { _highlightLayer.dispose(); } catch (e) {}
+        _highlightLayer = null;
+    }
+    _selectedEntityUid = 0;
+
     if (currentScene) {
         currentScene.dispose();
         currentScene = null;
@@ -688,13 +696,74 @@ var CMD_DEBUG_TOGGLE_POSTPROC   = 0xAC;
 var CMD_DEBUG_TOGGLE_SKELETONS  = 0xAD;
 var CMD_SET_ANIM_FRAME          = 0xB0;
 var CMD_SET_ANIM_LOOP           = 0xB1;
+var CMD_SELECT_ENTITY           = 0xC0;
+
+// Selection highlighting state
+var _highlightLayer = null;
+var _highlightedMesh = null;
+var _selectedEntityUid = 0;
+
+function _highlightEntity(scene, uid) {
+    // Clear previous highlight
+    if (_highlightedMesh) {
+        _highlightedMesh.showBoundingBox = false;
+        _highlightedMesh.renderOutline = false;
+        _highlightedMesh = null;
+    }
+    if (_highlightLayer) {
+        try { _highlightLayer.removeAllMeshes(); } catch (e) {}
+    }
+
+    _selectedEntityUid = uid;
+    if (uid <= 0) return;
+
+    // Find the entity — search all node types
+    var entity = null;
+    var allNodes = (scene.meshes || []).concat(scene.transformNodes || [])
+        .concat(scene.cameras || []).concat(scene.lights || []);
+    for (var i = 0; i < allNodes.length; i++) {
+        if (allNodes[i].uniqueId === uid) { entity = allNodes[i]; break; }
+    }
+    if (!entity) return;
+
+    // Only highlight meshes (they have geometry)
+    if (!entity.getBoundingInfo) return;
+
+    // Try HighlightLayer first
+    try {
+        if (!_highlightLayer) {
+            _highlightLayer = new BABYLON.HighlightLayer("inspectorHL", scene);
+            _highlightLayer.innerGlow = false;
+        }
+        _highlightLayer.addMesh(entity, new BABYLON.Color3(1, 0.65, 0));
+        _highlightedMesh = entity;
+        return;
+    } catch (e) {
+        _highlightLayer = null;
+    }
+
+    // Fallback: bounding box + outline
+    try {
+        entity.showBoundingBox = true;
+        entity.renderOutline = true;
+        entity.outlineColor = new BABYLON.Color3(1, 0.65, 0);
+        entity.outlineWidth = 0.02;
+        _highlightedMesh = entity;
+    } catch (e) {}
+}
 
 // Debug state tracking
 var _debugState = {};
 
 function _findEntityByUniqueId(scene, uid) {
-    var node = scene.getNodeByUniqueId ? scene.getNodeByUniqueId(uid) : null;
-    if (node) return node;
+    // Search all node types
+    var lists = [scene.meshes, scene.transformNodes, scene.cameras, scene.lights];
+    for (var li = 0; li < lists.length; li++) {
+        var list = lists[li] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].uniqueId === uid) return list[i];
+        }
+    }
 
     var mats = scene.materials || [];
     for (var i = 0; i < mats.length; i++) {
@@ -745,6 +814,12 @@ function ApplyInspectorCommands(buf) {
         var uid = readU32();
 
         try {
+            // Selection command works for any uid
+            if (cmdType === CMD_SELECT_ENTITY) {
+                _highlightEntity(scene, uid);
+                continue;
+            }
+
             // Scene-level commands (uid === 0)
             if (uid === 0) {
                 switch (cmdType) {

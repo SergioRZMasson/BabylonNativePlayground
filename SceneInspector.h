@@ -113,6 +113,7 @@ enum InspectorCmd : uint8_t
     CMD_DEBUG_TOGGLE_SKELETONS  = 0xAD,
     CMD_SET_ANIM_FRAME          = 0xB0,
     CMD_SET_ANIM_LOOP           = 0xB1,
+    CMD_SELECT_ENTITY           = 0xC0,
 };
 
 // ===========================================================================
@@ -1102,7 +1103,7 @@ inline bool EditBool(const char* label, bool* v, uint32_t uid, InspectorCmd cmd)
 }
 
 // ===========================================================================
-// Scene Explorer tree rendering
+// Selection helpers
 // ===========================================================================
 inline void SelectEntity(EntityType type, uint32_t uid, size_t idx)
 {
@@ -1116,54 +1117,127 @@ inline bool IsSelected(EntityType type, uint32_t uid)
     return s_state.selected.type == type && s_state.selected.uniqueId == uid;
 }
 
-inline void RenderTreeItem(const char* label, EntityType type, uint32_t uid, size_t idx,
-                            const char* icon = nullptr, bool* enabledToggle = nullptr,
-                            uint32_t enabledUid = 0, bool* visibleToggle = nullptr, uint32_t visibleUid = 0)
+// Flat list item (for Materials, Textures, AnimGroups, Skeletons)
+inline void RenderTreeItem(const char* label, EntityType type, uint32_t uid, size_t idx)
 {
     ImGui::PushID(static_cast<int>(uid));
-
     bool selected = IsSelected(type, uid);
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
                                 ImGuiTreeNodeFlags_SpanAvailWidth;
     if (selected) flags |= ImGuiTreeNodeFlags_Selected;
-
     ImGui::TreeNodeEx(label, flags);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
         SelectEntity(type, uid, idx);
-
-    // Inline toggles on the right
-    if (visibleToggle || enabledToggle)
-    {
-        float rightX = ImGui::GetWindowContentRegionMax().x;
-        if (visibleToggle)
-        {
-            rightX -= 20;
-            ImGui::SameLine(rightX);
-            char eyeId[32];
-            snprintf(eyeId, sizeof(eyeId), "##vis%u", uid);
-            if (ImGui::SmallButton(*visibleToggle ? "o" : "-"))
-            {
-                *visibleToggle = !(*visibleToggle);
-                EmitCmdBool(CMD_SET_VISIBLE, visibleUid, *visibleToggle);
-            }
-        }
-        if (enabledToggle)
-        {
-            rightX -= 22;
-            ImGui::SameLine(rightX);
-            char enId[32];
-            snprintf(enId, sizeof(enId), "##en%u", uid);
-            if (ImGui::SmallButton(*enabledToggle ? "*" : "."))
-            {
-                *enabledToggle = !(*enabledToggle);
-                EmitCmdBool(CMD_SET_ENABLED, enabledUid, *enabledToggle);
-            }
-        }
-    }
-
     ImGui::PopID();
 }
 
+// ===========================================================================
+// Scene Graph Tree — build unified hierarchy from all entity types
+// ===========================================================================
+struct SceneGraphNode
+{
+    EntityType type;
+    uint32_t uniqueId;
+    uint32_t parentId;
+    std::string name;
+    std::string typeName;
+    std::vector<size_t> children;
+};
+
+struct SceneGraph
+{
+    std::vector<SceneGraphNode> nodes;
+    std::vector<size_t> roots;
+    std::unordered_map<uint32_t, size_t> idMap;
+};
+
+inline SceneGraph BuildSceneGraph(const SceneData& data)
+{
+    SceneGraph g;
+
+    auto addNode = [&](EntityType type, uint32_t uid, uint32_t pid, const std::string& name, const std::string& typeName) {
+        if (uid == 0 || g.idMap.count(uid)) return;
+        size_t idx = g.nodes.size();
+        g.nodes.push_back({type, uid, pid, name, typeName, {}});
+        g.idMap[uid] = idx;
+    };
+
+    for (auto& cam : data.cameras)
+        addNode(EntityType::Camera, cam.uniqueId, cam.parentId, cam.name, CameraTypeName(cam.type));
+    for (auto& node : data.nodes)
+        addNode(EntityType::Node, node.uniqueId, node.parentId, node.name, node.className);
+    for (auto& mesh : data.meshes)
+        addNode(EntityType::Mesh, mesh.uniqueId, mesh.parentId, mesh.name, mesh.className);
+    for (auto& light : data.lights)
+        addNode(EntityType::Light, light.uniqueId, light.parentId, light.name, LightTypeName(light.type));
+
+    for (size_t i = 0; i < g.nodes.size(); i++)
+    {
+        auto& n = g.nodes[i];
+        auto pit = g.idMap.find(n.parentId);
+        if (n.parentId == 0 || pit == g.idMap.end())
+            g.roots.push_back(i);
+        else
+            g.nodes[pit->second].children.push_back(i);
+    }
+    return g;
+}
+
+// Check if node or any descendant matches the search filter
+inline bool HasFilterMatch(const SceneGraph& g, size_t idx, const char* filter)
+{
+    if (CaseInsensitiveContains(g.nodes[idx].name, filter)) return true;
+    for (size_t ci : g.nodes[idx].children)
+        if (HasFilterMatch(g, ci, filter)) return true;
+    return false;
+}
+
+inline void RenderGraphNode(const SceneGraph& g, size_t idx, const char* filter, SceneData& data)
+{
+    auto& node = g.nodes[idx];
+
+    if (filter[0] != '\0' && !HasFilterMatch(g, idx, filter))
+        return;
+
+    bool hasChildren = !node.children.empty();
+    bool selected = IsSelected(node.type, node.uniqueId);
+
+    const char* typeTag = "";
+    switch (node.type) {
+    case EntityType::Camera: typeTag = "[Cam] "; break;
+    case EntityType::Light:  typeTag = "[Light] "; break;
+    case EntityType::Mesh:   typeTag = "[Mesh] "; break;
+    case EntityType::Node:   typeTag = "[Node] "; break;
+    default: break;
+    }
+
+    char label[256];
+    snprintf(label, sizeof(label), "%s%s  %s###sg_%u", typeTag, node.name.c_str(), node.typeName.c_str(), node.uniqueId);
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
+    if (selected) flags |= ImGuiTreeNodeFlags_Selected;
+    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    if (filter[0] != '\0') flags |= ImGuiTreeNodeFlags_DefaultOpen;
+
+    bool open = ImGui::TreeNodeEx(label, flags);
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+    {
+        SelectEntity(node.type, node.uniqueId, 0);
+        EmitCmd(CMD_SELECT_ENTITY, node.uniqueId);
+    }
+
+    if (open && hasChildren)
+    {
+        for (size_t ci : node.children)
+            RenderGraphNode(g, ci, filter, data);
+        ImGui::TreePop();
+    }
+}
+
+// ===========================================================================
+// Scene Explorer — hierarchical scene graph + resource lists
+// ===========================================================================
 inline void RenderSceneExplorer(SceneData& data)
 {
     const char* filter = s_state.searchBuf;
@@ -1180,78 +1254,25 @@ inline void RenderSceneExplorer(SceneData& data)
         if (sceneSelected) flags |= ImGuiTreeNodeFlags_Selected;
         ImGui::TreeNodeEx("Scene", flags);
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
             SelectEntity(EntityType::Scene, 0, 0);
+            EmitCmd(CMD_SELECT_ENTITY, 0); // clear highlight
+        }
     }
+
+    // Build and render the hierarchical scene graph
+    SceneGraph graph = BuildSceneGraph(data);
 
     char hdr[128];
-
-    // Cameras
-    snprintf(hdr, sizeof(hdr), "Cameras (%zu)###cam_sec", data.cameras.size());
+    snprintf(hdr, sizeof(hdr), "Scene Graph (%zu)###sg_sec", graph.nodes.size());
     if (ImGui::TreeNodeEx(hdr, ImGuiTreeNodeFlags_DefaultOpen))
     {
-        for (size_t i = 0; i < data.cameras.size(); i++)
-        {
-            auto& cam = data.cameras[i];
-            if (!CaseInsensitiveContains(cam.name, filter)) continue;
-            char label[256];
-            snprintf(label, sizeof(label), "%s %s[%s]###c%u",
-                cam.isActive ? "*" : " ", cam.name.c_str(), CameraTypeName(cam.type), cam.uniqueId);
-            RenderTreeItem(label, EntityType::Camera, cam.uniqueId, i);
-        }
+        for (size_t ri : graph.roots)
+            RenderGraphNode(graph, ri, filter, data);
         ImGui::TreePop();
     }
 
-    // Lights
-    snprintf(hdr, sizeof(hdr), "Lights (%zu)###light_sec", data.lights.size());
-    if (ImGui::TreeNodeEx(hdr, ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        for (size_t i = 0; i < data.lights.size(); i++)
-        {
-            auto& light = data.lights[i];
-            if (!CaseInsensitiveContains(light.name, filter)) continue;
-            char label[256];
-            snprintf(label, sizeof(label), "%s [%s]###l%u",
-                light.name.c_str(), LightTypeName(light.type), light.uniqueId);
-            RenderTreeItem(label, EntityType::Light, light.uniqueId, i,
-                           nullptr, &light.isEnabled, light.uniqueId);
-        }
-        ImGui::TreePop();
-    }
-
-    // Transform Nodes
-    snprintf(hdr, sizeof(hdr), "Nodes (%zu)###node_sec", data.nodes.size());
-    if (ImGui::TreeNode(hdr))
-    {
-        for (size_t i = 0; i < data.nodes.size(); i++)
-        {
-            auto& node = data.nodes[i];
-            if (!CaseInsensitiveContains(node.name, filter)) continue;
-            char label[256];
-            snprintf(label, sizeof(label), "%s [%s]###n%u",
-                node.name.c_str(), node.className.c_str(), node.uniqueId);
-            RenderTreeItem(label, EntityType::Node, node.uniqueId, i,
-                           nullptr, &node.isEnabled, node.uniqueId);
-        }
-        ImGui::TreePop();
-    }
-
-    // Meshes
-    snprintf(hdr, sizeof(hdr), "Meshes (%zu)###mesh_sec", data.meshes.size());
-    if (ImGui::TreeNodeEx(hdr, ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        for (size_t i = 0; i < data.meshes.size(); i++)
-        {
-            auto& mesh = data.meshes[i];
-            if (!CaseInsensitiveContains(mesh.name, filter)) continue;
-            char label[256];
-            snprintf(label, sizeof(label), "%s [%s]###m%u",
-                mesh.name.c_str(), mesh.className.c_str(), mesh.uniqueId);
-            RenderTreeItem(label, EntityType::Mesh, mesh.uniqueId, i,
-                           nullptr, &mesh.isEnabled, mesh.uniqueId,
-                           &mesh.isVisible, mesh.uniqueId);
-        }
-        ImGui::TreePop();
-    }
+    // --- Resource lists (not part of node hierarchy) ---
 
     // Materials
     snprintf(hdr, sizeof(hdr), "Materials (%zu)###mat_sec", data.materials.size());
