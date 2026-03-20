@@ -616,8 +616,6 @@ struct OcornutImguiContext
 		bgfx::destroy(u_imageLodEnabled);
 		bgfx::destroy(m_imageProgram);
 		bgfx::destroy(m_program);
-
-		m_allocator = NULL;
 	}
 
 	void setupStyle(bool _dark)
