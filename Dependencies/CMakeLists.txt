@@ -52,13 +52,17 @@ endif()
 # collides with macOS's Foundation.framework. SDL3 links the framework via
 # $<LINK_LIBRARY:FRAMEWORK,Foundation>, but CMake resolves "Foundation" to the
 # JsRuntimeHost target, producing the broken flag "-framework libFoundation.a".
-# Fix by replacing the generator expression with a plain -framework flag.
+# Fix by replacing the generator expression with a plain -framework flag in both
+# LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES (CMake 3.26+ propagates PRIVATE
+# static-library deps into INTERFACE_LINK_LIBRARIES via $<LINK_ONLY:...>).
 if(APPLE)
-    get_target_property(_sdl3_libs SDL3-static LINK_LIBRARIES)
-    if(_sdl3_libs)
-        string(REPLACE "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "-framework Foundation" _sdl3_libs "${_sdl3_libs}")
-        set_target_properties(SDL3-static PROPERTIES LINK_LIBRARIES "${_sdl3_libs}")
-    endif()
+    foreach(_sdl_prop LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+        get_target_property(_sdl3_libs SDL3-static ${_sdl_prop})
+        if(_sdl3_libs)
+            string(REPLACE "$<LINK_LIBRARY:FRAMEWORK,Foundation>" "-framework Foundation" _sdl3_libs "${_sdl3_libs}")
+            set_target_properties(SDL3-static PROPERTIES ${_sdl_prop} "${_sdl3_libs}")
+        endif()
+    endforeach()
 endif()
 
 # ---- ImGui ----
