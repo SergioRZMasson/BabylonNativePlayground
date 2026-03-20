@@ -20,6 +20,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_dialog.h>
 
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
@@ -181,6 +182,8 @@ static void LoadDroppedFile(const std::string& filePath)
         loaderFunc = "load_glb";
     else if (ext == ".obj")
         loaderFunc = "load_obj";
+    else if (ext == ".env")
+        loaderFunc = "load_env";
     else
     {
         std::cout << "Unsupported file type: " << ext << std::endl;
@@ -231,6 +234,17 @@ static void LoadDroppedFile(const std::string& filePath)
             Napi::String::New(env, fileName)
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// SDL3 file dialog callback — called when user picks a file
+// ---------------------------------------------------------------------------
+static void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int filter)
+{
+    (void)userdata;
+    (void)filter;
+    if (!filelist || !filelist[0]) return;
+    LoadDroppedFile(std::string(filelist[0]));
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +330,7 @@ static void Initialize(SDL_Window* window)
     loader.LoadScript("app:///Scripts/playground.js");
     loader.LoadScript("app:///Scripts/Loaders/loader_glb.js");
     loader.LoadScript("app:///Scripts/Loaders/loader_obj.js");
+    loader.LoadScript("app:///Scripts/Loaders/loader_env.js");
 
     ImGui_ImplBabylon_Init(width, height);
 }
@@ -504,15 +519,43 @@ int main(int argc, char* argv[])
                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoCollapse);
 
-            // --- Load from hash ---
-            ImGui::Text("Load from Playground Hash:");
-            ImGui::InputText("##hash", hashBuf, sizeof(hashBuf));
-            ImGui::SameLine();
-            if (ImGui::Button("Load"))
+            // =============================================================
+            // Load Assets section
+            // =============================================================
+            if (ImGui::CollapsingHeader("Load Assets", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                std::string hash(hashBuf);
-                if (!hash.empty())
-                    LoadPlayground(hash);
+                if (ImGui::Button("Open GLB File..."))
+                {
+                    static const SDL_DialogFileFilter glbFilter[] = {
+                        { "glTF Binary", "glb;gltf" }
+                    };
+                    SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, glbFilter, 1, nullptr, false);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Open ENV File..."))
+                {
+                    static const SDL_DialogFileFilter envFilter[] = {
+                        { "Environment Map", "env" }
+                    };
+                    SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, envFilter, 1, nullptr, false);
+                }
+                ImGui::TextDisabled("or drag & drop .glb / .obj / .env files");
+            }
+
+            // =============================================================
+            // Load Playground section
+            // =============================================================
+            if (ImGui::CollapsingHeader("Load Playground", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::Text("Playground Hash:");
+                ImGui::InputText("##hash", hashBuf, sizeof(hashBuf));
+                ImGui::SameLine();
+                if (ImGui::Button("Load"))
+                {
+                    std::string hash(hashBuf);
+                    if (!hash.empty())
+                        LoadPlayground(hash);
+                }
             }
 
             ImGui::Separator();
@@ -527,8 +570,11 @@ int main(int argc, char* argv[])
                 }
             }
 
-            // --- Code editor ---
-            ImGui::Text("Or write your own createScene code:");
+            // =============================================================
+            // Code Editor section
+            // =============================================================
+            ImGui::Separator();
+            ImGui::Text("Code Editor:");
             ImVec2 avail = ImGui::GetContentRegionAvail();
             float editorHeight = avail.y - 80.0f;
             if (editorHeight < 100.0f) editorHeight = 100.0f;

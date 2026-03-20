@@ -33,7 +33,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/babylonjs/babylon.max.js")
     set(APP_SCRIPTS
         "Scripts/playground.js"
         "Scripts/Loaders/loader_glb.js"
-        "Scripts/Loaders/loader_obj.js")
+        "Scripts/Loaders/loader_obj.js"
+        "Scripts/Loaders/loader_env.js")
 
     target_sources(BabylonNativePlayground PRIVATE ${BABYLON_SCRIPTS} ${APP_SCRIPTS})
 
