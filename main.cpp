@@ -640,7 +640,6 @@ int main(int argc, char* argv[])
     }
 
     Uninitialize();
-
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
