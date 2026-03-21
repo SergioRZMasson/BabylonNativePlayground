@@ -572,8 +572,6 @@ int main(int argc, char* argv[])
                 }
             }
 
-            ImGui::Separator();
-
             // Sync code editor if JS sent new playground code
             {
                 std::lock_guard<std::mutex> lock(s_codeSyncMutex);
@@ -587,25 +585,26 @@ int main(int argc, char* argv[])
             // =============================================================
             // Code Editor section
             // =============================================================
-            ImGui::Separator();
-            ImGui::Text("Code Editor:");
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float editorHeight = avail.y - 80.0f;
-            if (editorHeight < 100.0f) editorHeight = 100.0f;
-            ImGui::InputTextMultiline("##code", codeBuf, CODE_BUF_SIZE,
-                ImVec2(-1.0f, editorHeight),
-                ImGuiInputTextFlags_AllowTabInput);
-
-            if (ImGui::Button("Run Code"))
+            if (ImGui::CollapsingHeader("Code Editor", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                std::string code(codeBuf);
-                if (!code.empty())
-                    RunPlaygroundCode(code);
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float editorHeight = avail.y - 80.0f;
+                if (editorHeight < 100.0f) editorHeight = 100.0f;
+                ImGui::InputTextMultiline("##code", codeBuf, CODE_BUF_SIZE,
+                    ImVec2(-1.0f, editorHeight),
+                    ImGuiInputTextFlags_AllowTabInput);
+
+                if (ImGui::Button("Run Code"))
+                {
+                    std::string code(codeBuf);
+                    if (!code.empty())
+                        RunPlaygroundCode(code);
+                }
+                ImGui::SameLine();
+                ImGui::Text("%.1f FPS", io.Framerate);
+                ImGui::SameLine();
+                ImGui::TextDisabled("(F1: toggle | Ctrl+R: reset)");
             }
-            ImGui::SameLine();
-            ImGui::Text("%.1f FPS", io.Framerate);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(F1: toggle | Ctrl+R: reset)");
 
             ImGui::End();
 
