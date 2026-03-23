@@ -260,7 +260,7 @@ bool SubstanceImporter::LoadSbsarFile(const std::string& filePath)
 
     SubstanceAir::OutputOptions outputOptions{};
     outputOptions.mAllowedFormats = SubstanceAir::Format_RGBA8;
-    outputOptions.mMipmap = SubstanceAir::Mipmap_ForceNone;
+    outputOptions.mMipmap = SubstanceAir::Mipmap_ForceFull;
 
     mat.package = std::make_unique<SubstanceAir::PackageDesc>(
         mat.archiveData.data(),
@@ -284,7 +284,7 @@ bool SubstanceImporter::LoadSbsarFile(const std::string& filePath)
                 input->mDesc.mType == Substance_IOType_Integer2)
             {
                 static_cast<SubstanceAir::InputInstanceInt2*>(input)->setValue(
-                    SubstanceAir::Vec2Int(10, 10));
+                    SubstanceAir::Vec2Int(11, 11));
             }
         }
     }
