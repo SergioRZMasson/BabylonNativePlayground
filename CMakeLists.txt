@@ -12,11 +12,24 @@ if(SUBSTANCE_SDK_PATH)
     if(NOT EXISTS "${SUBSTANCE_SDK_PATH}/substance-config.cmake")
         message(FATAL_ERROR "SUBSTANCE_SDK_PATH is set but substance-config.cmake was not found at: ${SUBSTANCE_SDK_PATH}")
     endif()
+    # Use GPU-accelerated engine with system-memory output (blend):
+    # D3D11 on Windows, Metal on macOS
+    if(WIN32)
+        set(SUBSTANCE_FRAMEWORK_ENGINE_VARIANT d3d11_blend)
+    elseif(APPLE)
+        set(SUBSTANCE_FRAMEWORK_ENGINE_VARIANT mtl_blend)
+    endif()
     include("${SUBSTANCE_SDK_PATH}/substance-config.cmake")
     list(APPEND SUBSTANCE_SOURCES
         Source/SubstanceImporter.h
-        Source/SubstanceImporter.cpp)
-    list(APPEND SUBSTANCE_LIBRARIES Substance::Framework)
+        Source/SubstanceImporter.cpp
+        Source/Platforms/SubstanceTexture.h)
+    if(WIN32)
+        list(APPEND SUBSTANCE_SOURCES Source/Platforms/SubstanceTexture_D3D11.cpp)
+    elseif(APPLE)
+        list(APPEND SUBSTANCE_SOURCES Source/Platforms/SubstanceTexture_Metal.cpp)
+    endif()
+    list(APPEND SUBSTANCE_LIBRARIES Substance::Framework ExternalTexture)
     message(STATUS "Substance SDK enabled from: ${SUBSTANCE_SDK_PATH}")
 endif()
 
@@ -71,7 +84,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/babylonjs/babylon.max.js")
         "Scripts/playground.js"
         "Scripts/Loaders/loader_glb.js"
         "Scripts/Loaders/loader_obj.js"
-        "Scripts/Loaders/loader_env.js")
+        "Scripts/Loaders/loader_env.js"
+        "Scripts/Loaders/load_sbsar.js")
 
     target_sources(BabylonNativePlayground PRIVATE ${BABYLON_SCRIPTS} ${APP_SCRIPTS})
 

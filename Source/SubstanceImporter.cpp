@@ -2,6 +2,8 @@
 
 #ifdef HAS_SUBSTANCE_SDK
 
+#include "Platforms/SubstanceTexture.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -94,9 +96,143 @@ SubstanceImporter::~SubstanceImporter()
     m_renderer.reset();
 }
 
-void SubstanceImporter::SetTextureCallback(SubstanceTextureCallback callback)
+void SubstanceImporter::SetGraphicsDevice(Babylon::Graphics::Device* device)
 {
-    m_textureCallback = std::move(callback);
+    m_graphicsDevice = device;
+}
+
+void SubstanceImporter::SetApplyCallback(SubstanceApplyCallback callback)
+{
+    m_applyCallback = std::move(callback);
+}
+
+bool SubstanceImporter::HasRenderedOutputs() const
+{
+    if (m_selectedMaterial < 0 || m_selectedMaterial >= static_cast<int>(m_materials.size()))
+        return false;
+    return !m_materials[m_selectedMaterial].externalOutputs.empty();
+}
+
+void SubstanceImporter::ApplyToMaterial(uint32_t materialUid)
+{
+    if (!m_applyCallback)
+        return;
+    if (m_selectedMaterial < 0 || m_selectedMaterial >= static_cast<int>(m_materials.size()))
+        return;
+    auto& mat = m_materials[m_selectedMaterial];
+    if (mat.externalOutputs.empty())
+        return;
+
+    m_applyCallback(materialUid, mat.externalOutputs);
+}
+
+// ---------------------------------------------------------------------------
+// Create native textures + ExternalTexture for each graph output
+// ---------------------------------------------------------------------------
+void SubstanceImporter::CreateExternalTextures(LoadedMaterial& mat, SubstanceAir::GraphInstance& graph)
+{
+    if (!m_graphicsDevice)
+        return;
+
+    auto* nativeDevice = m_graphicsDevice->GetPlatformInfo().Device;
+    mat.externalOutputs.clear();
+
+    const auto& outputs = graph.getOutputs();
+    for (auto* output : outputs)
+    {
+        if (!output->mDesc.isImage())
+            continue;
+
+        SubstanceAir::OutputInstance::Result result(output->grabResult());
+        if (!result.get() || !result->isImage())
+            continue;
+
+        auto* imgResult = dynamic_cast<SubstanceAir::RenderResultImage*>(result.get());
+        const auto& tex = imgResult->getTexture();
+
+        uint32_t w = tex.level0Width;
+        uint32_t h = tex.level0Height;
+
+        // Create native GPU texture and upload initial pixel data
+        auto nativeTex = CreateSubstanceTexture(nativeDevice, w, h);
+        if (tex.buffer)
+        {
+            size_t bpp = PixelFormatBytesPerPixel(tex.pixelFormat);
+            size_t dataSize = static_cast<size_t>(w) * h * bpp;
+            UpdateSubstanceTexture(nativeDevice, nativeTex, w, h,
+                static_cast<const uint8_t*>(tex.buffer), dataSize);
+        }
+
+        SubstanceExternalOutput extOut;
+        extOut.identifier = std::string(output->mDesc.mIdentifier.c_str());
+        extOut.width = w;
+        extOut.height = h;
+        extOut.externalTexture.emplace(nativeTex);
+
+        if (!output->mDesc.mChannels.empty())
+            extOut.channelType = ChannelUseName(output->mDesc.mChannels[0]);
+        else
+            extOut.channelType = extOut.identifier;
+
+        mat.externalOutputs.push_back(std::move(extOut));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Update existing ExternalTextures with new render results
+// ---------------------------------------------------------------------------
+void SubstanceImporter::UpdateExternalTextures(LoadedMaterial& mat, SubstanceAir::GraphInstance& graph)
+{
+    if (!m_graphicsDevice)
+        return;
+
+    auto* nativeDevice = m_graphicsDevice->GetPlatformInfo().Device;
+    const auto& outputs = graph.getOutputs();
+
+    // Build a map from identifier to external output index
+    for (auto* output : outputs)
+    {
+        if (!output->mDesc.isImage())
+            continue;
+
+        SubstanceAir::OutputInstance::Result result(output->grabResult());
+        if (!result.get() || !result->isImage())
+            continue;
+
+        auto* imgResult = dynamic_cast<SubstanceAir::RenderResultImage*>(result.get());
+        const auto& tex = imgResult->getTexture();
+        if (!tex.buffer)
+            continue;
+
+        std::string id(output->mDesc.mIdentifier.c_str());
+        for (auto& extOut : mat.externalOutputs)
+        {
+            if (extOut.identifier == id)
+            {
+                uint32_t w = tex.level0Width;
+                uint32_t h = tex.level0Height;
+                size_t bpp = PixelFormatBytesPerPixel(tex.pixelFormat);
+                size_t dataSize = static_cast<size_t>(w) * h * bpp;
+
+                // If size changed, recreate
+                if (w != extOut.width || h != extOut.height)
+                {
+                    auto nativeTex = CreateSubstanceTexture(nativeDevice, w, h);
+                    UpdateSubstanceTexture(nativeDevice, nativeTex, w, h,
+                        static_cast<const uint8_t*>(tex.buffer), dataSize);
+                    extOut.externalTexture->Update(nativeTex);
+                    extOut.width = w;
+                    extOut.height = h;
+                }
+                else
+                {
+                    UpdateSubstanceTexture(nativeDevice, extOut.externalTexture->Get(),
+                        w, h, static_cast<const uint8_t*>(tex.buffer), dataSize);
+                }
+                break;
+            }
+        }
+    }
 }
 
 bool SubstanceImporter::LoadSbsarFile(const std::string& filePath)
@@ -139,38 +275,27 @@ bool SubstanceImporter::LoadSbsarFile(const std::string& filePath)
 
     SubstanceAir::instantiate(mat.graphInstances, *mat.package);
 
+    // Set $outputsize to 1024x1024 (log2: 10,10) on all graphs
+    for (auto& graphPtr : mat.graphInstances)
+    {
+        for (auto* input : graphPtr->getInputs())
+        {
+            if (input->mDesc.mIdentifier == "$outputsize" &&
+                input->mDesc.mType == Substance_IOType_Integer2)
+            {
+                static_cast<SubstanceAir::InputInstanceInt2*>(input)->setValue(
+                    SubstanceAir::Vec2Int(10, 10));
+            }
+        }
+    }
+
     // Push all graph instances and do an initial render
     m_renderer->push(mat.graphInstances);
     m_renderer->run();
 
-    // Grab initial outputs and send to callback
-    for (auto& graphPtr : mat.graphInstances)
-    {
-        const auto& outputs = graphPtr->getOutputs();
-        for (auto* output : outputs)
-        {
-            SubstanceAir::OutputInstance::Result result(output->grabResult());
-            if (result.get() && result->isImage())
-            {
-                auto* imgResult = dynamic_cast<SubstanceAir::RenderResultImage*>(result.get());
-                const auto& tex = imgResult->getTexture();
-                if (tex.buffer && m_textureCallback)
-                {
-                    SubstanceTextureOutput texOut;
-                    texOut.identifier = std::string(output->mDesc.mIdentifier.c_str());
-                    texOut.graphUrl = std::string(graphPtr->mDesc.mPackageUrl.c_str());
-                    texOut.width = tex.level0Width;
-                    texOut.height = tex.level0Height;
-                    texOut.pixelFormat = tex.pixelFormat;
-                    texOut.channelsOrder = tex.channelsOrder;
-                    size_t bpp = PixelFormatBytesPerPixel(tex.pixelFormat);
-                    texOut.dataSize = static_cast<size_t>(tex.level0Width) * tex.level0Height * bpp;
-                    texOut.data = static_cast<const uint8_t*>(tex.buffer);
-                    m_textureCallback(texOut);
-                }
-            }
-        }
-    }
+    // Create external textures from initial render results
+    if (!mat.graphInstances.empty())
+        CreateExternalTextures(mat, *mat.graphInstances[0]);
 
     std::cout << "[Substance] Loaded: " << mat.displayName
               << " (" << mat.graphInstances.size() << " graph(s))" << std::endl;
@@ -184,7 +309,7 @@ bool SubstanceImporter::LoadSbsarFile(const std::string& filePath)
 // ---------------------------------------------------------------------------
 // Input parameter UI
 // ---------------------------------------------------------------------------
-void SubstanceImporter::RenderMaterialInputs(SubstanceAir::GraphInstance& graph)
+void SubstanceImporter::RenderMaterialInputs(LoadedMaterial& mat, SubstanceAir::GraphInstance& graph)
 {
     using namespace SubstanceAir;
 
@@ -445,31 +570,7 @@ void SubstanceImporter::RenderMaterialInputs(SubstanceAir::GraphInstance& graph)
     {
         m_renderer->push(graph);
         m_renderer->run();
-
-        const auto& outputs = graph.getOutputs();
-        for (auto* output : outputs)
-        {
-            SubstanceAir::OutputInstance::Result result(output->grabResult());
-            if (result.get() && result->isImage())
-            {
-                auto* imgResult = dynamic_cast<SubstanceAir::RenderResultImage*>(result.get());
-                const auto& tex = imgResult->getTexture();
-                if (tex.buffer && m_textureCallback)
-                {
-                    SubstanceTextureOutput texOut;
-                    texOut.identifier = std::string(output->mDesc.mIdentifier.c_str());
-                    texOut.graphUrl = std::string(graph.mDesc.mPackageUrl.c_str());
-                    texOut.width = tex.level0Width;
-                    texOut.height = tex.level0Height;
-                    texOut.pixelFormat = tex.pixelFormat;
-                    texOut.channelsOrder = tex.channelsOrder;
-                    size_t bpp = PixelFormatBytesPerPixel(tex.pixelFormat);
-                    texOut.dataSize = static_cast<size_t>(tex.level0Width) * tex.level0Height * bpp;
-                    texOut.data = static_cast<const uint8_t*>(tex.buffer);
-                    m_textureCallback(texOut);
-                }
-            }
-        }
+        UpdateExternalTextures(mat, graph);
     }
 }
 
@@ -531,7 +632,7 @@ void SubstanceImporter::RenderGraph(LoadedMaterial& mat, size_t graphIdx)
 
     if (ImGui::CollapsingHeader("Inputs", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        RenderMaterialInputs(graph);
+        RenderMaterialInputs(mat, graph);
     }
 
     if (ImGui::CollapsingHeader("Outputs", ImGuiTreeNodeFlags_DefaultOpen))
@@ -610,8 +711,11 @@ void SubstanceImporter::RenderTab()
 // Stub implementation when Substance SDK is not available
 SubstanceImporter::SubstanceImporter() = default;
 SubstanceImporter::~SubstanceImporter() = default;
-void SubstanceImporter::SetTextureCallback(SubstanceTextureCallback) {}
+void SubstanceImporter::SetGraphicsDevice(Babylon::Graphics::Device*) {}
+void SubstanceImporter::SetApplyCallback(SubstanceApplyCallback) {}
 bool SubstanceImporter::LoadSbsarFile(const std::string&) { return false; }
 void SubstanceImporter::RenderTab() {}
+void SubstanceImporter::ApplyToMaterial(uint32_t) {}
+bool SubstanceImporter::HasRenderedOutputs() const { return false; }
 
 #endif // HAS_SUBSTANCE_SDK

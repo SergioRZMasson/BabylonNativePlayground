@@ -1270,6 +1270,21 @@ namespace SceneInspector
             EditSlider("Metallic", &mat.metallic, uid, CMD_SET_METALLIC, 0, 1);
             EditSlider("Roughness", &mat.roughness, uid, CMD_SET_ROUGHNESS, 0, 1);
             EditFloat("Env Intensity", &mat.environmentIntensity, uid, CMD_SET_ENV_INTENSITY, 0.01f);
+
+#ifdef HAS_SUBSTANCE_SDK
+            if (m_substanceImporter && m_substanceImporter->HasRenderedOutputs())
+            {
+                ImGui::Separator();
+                if (ImGui::Button("Load Substance Textures"))
+                {
+                    m_substanceImporter->ApplyToMaterial(uid);
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Applies the latest Substance rendered textures\nto this PBR material (BaseColor, Normal, etc.)");
+            }
+#endif
         }
 
         if (ImGui::CollapsingHeader("Depth###matp_depth"))

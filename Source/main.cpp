@@ -89,40 +89,53 @@ static void NativeSetPlaygroundCode(const Napi::CallbackInfo& info)
 
 #ifdef HAS_SUBSTANCE_SDK
 // ---------------------------------------------------------------------------
-// Send rendered Substance texture data to JS
+// Apply Substance external textures to a BabylonJS material via JS
 // ---------------------------------------------------------------------------
-static void SendSubstanceTextureToJS(const SubstanceTextureOutput& texOut)
+static void ApplySubstanceTexturesToMaterial(uint32_t materialUid,
+    const std::vector<SubstanceExternalOutput>& outputs)
 {
-    if (!runtime)
+    if (!runtime || outputs.empty())
         return;
 
-    // Copy pixel data since the callback may be deferred
-    std::vector<uint8_t> pixelData(texOut.data, texOut.data + texOut.dataSize);
-    std::string identifier = texOut.identifier;
-    std::string graphUrl = texOut.graphUrl;
-    uint32_t width = texOut.width;
-    uint32_t height = texOut.height;
-    uint8_t pixelFormat = texOut.pixelFormat;
-    uint8_t channelsOrder = texOut.channelsOrder;
+    // Capture shared copies of the ExternalTexture objects
+    struct TexEntry
+    {
+        Babylon::Plugins::ExternalTexture externalTexture;
+        std::string channelType;
+        uint32_t width, height;
+        TexEntry(Babylon::Plugins::ExternalTexture et, std::string ct, uint32_t w, uint32_t h)
+            : externalTexture(std::move(et)), channelType(std::move(ct)), width(w), height(h) {}
+    };
+    auto entries = std::make_shared<std::vector<TexEntry>>();
+    entries->reserve(outputs.size());
+    for (auto& out : outputs)
+    {
+        if (out.externalTexture.has_value())
+            entries->emplace_back(*out.externalTexture, out.channelType, out.width, out.height);
+    }
 
-    runtime->Dispatch([pixelData = std::move(pixelData), identifier, graphUrl,
-                       width, height, pixelFormat, channelsOrder](Napi::Env env) {
-        auto fn = env.Global().Get("_onSubstanceTextureReady");
+    runtime->Dispatch([materialUid, entries](Napi::Env env) {
+        auto fn = env.Global().Get("_applySubstanceTextures");
         if (!fn.IsFunction())
             return;
 
-        auto ab = Napi::ArrayBuffer::New(env, pixelData.size());
-        std::memcpy(ab.Data(), pixelData.data(), pixelData.size());
+        // Build a JS array of texture descriptors with ExternalTexture promises
+        auto arr = Napi::Array::New(env, entries->size());
+        for (size_t i = 0; i < entries->size(); ++i)
+        {
+            auto& e = (*entries)[i];
+            auto obj = Napi::Object::New(env);
+            obj.Set("texturePromise", e.externalTexture.AddToContextAsync(env));
+            obj.Set("channelType", Napi::String::New(env, e.channelType));
+            obj.Set("width", Napi::Number::New(env, e.width));
+            obj.Set("height", Napi::Number::New(env, e.height));
+            arr.Set(static_cast<uint32_t>(i), obj);
+        }
 
-        auto info = Napi::Object::New(env);
-        info.Set("identifier", Napi::String::New(env, identifier));
-        info.Set("graphUrl", Napi::String::New(env, graphUrl));
-        info.Set("width", Napi::Number::New(env, width));
-        info.Set("height", Napi::Number::New(env, height));
-        info.Set("pixelFormat", Napi::Number::New(env, pixelFormat));
-        info.Set("channelsOrder", Napi::Number::New(env, channelsOrder));
-
-        fn.As<Napi::Function>().Call({ab, info});
+        fn.As<Napi::Function>().Call({
+            Napi::Number::New(env, materialUid),
+            arr
+        });
     });
 }
 #endif
@@ -398,6 +411,7 @@ static void Initialize(SDL_Window* window)
     loader.LoadScript("app:///Scripts/Loaders/loader_glb.js");
     loader.LoadScript("app:///Scripts/Loaders/loader_obj.js");
     loader.LoadScript("app:///Scripts/Loaders/loader_env.js");
+    loader.LoadScript("app:///Scripts/Loaders/load_sbsar.js");
 
     ImGui_ImplBabylon_Init(width, height);
 }
@@ -461,7 +475,8 @@ int main(int argc, char* argv[])
     Initialize(window);
 
 #ifdef HAS_SUBSTANCE_SDK
-    s_substanceImporter.SetTextureCallback(SendSubstanceTextureToJS);
+    s_substanceImporter.SetGraphicsDevice(&device.value());
+    s_substanceImporter.SetApplyCallback(ApplySubstanceTexturesToMaterial);
     s_inspector.SetSubstanceImporter(&s_substanceImporter);
 #endif
 
