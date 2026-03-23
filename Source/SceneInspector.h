@@ -11,6 +11,10 @@
 
 #include "imgui.h"
 
+#ifdef HAS_SUBSTANCE_SDK
+class SubstanceImporter;
+#endif
+
 namespace SceneInspector
 {
 
@@ -564,6 +568,10 @@ namespace SceneInspector
 
         void RenderInspector(SceneData& data);
 
+#ifdef HAS_SUBSTANCE_SDK
+        void SetSubstanceImporter(SubstanceImporter* importer) { m_substanceImporter = importer; }
+#endif
+
     private:
         // UI state
         SelectedEntity m_selected;
@@ -658,6 +666,10 @@ namespace SceneInspector
         void RenderTextureProps(TextureInfo& tex);
         void RenderAnimGroupProps(AnimGroupInfo& ag);
         void RenderSkeletonProps(SkeletonInfo& sk);
+
+#ifdef HAS_SUBSTANCE_SDK
+        SubstanceImporter* m_substanceImporter = nullptr;
+#endif
     };
 
     // Name helpers (stateless utilities)

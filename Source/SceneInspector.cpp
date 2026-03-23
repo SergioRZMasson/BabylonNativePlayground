@@ -1,5 +1,9 @@
 #include "SceneInspector.h"
 
+#ifdef HAS_SUBSTANCE_SDK
+#include "SubstanceImporter.h"
+#endif
+
 namespace SceneInspector
 {
 
@@ -1668,6 +1672,17 @@ namespace SceneInspector
                 RenderDebugPanel();
                 ImGui::EndTabItem();
             }
+#ifdef HAS_SUBSTANCE_SDK
+            if (m_substanceImporter)
+            {
+                if (ImGui::BeginTabItem("Substance"))
+                {
+                    m_activeTab = 4;
+                    m_substanceImporter->RenderTab();
+                    ImGui::EndTabItem();
+                }
+            }
+#endif
             ImGui::EndTabBar();
         }
 

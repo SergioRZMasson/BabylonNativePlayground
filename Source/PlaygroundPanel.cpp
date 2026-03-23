@@ -60,7 +60,18 @@ void PlaygroundPanel::Render(const ImGuiIO& io, const PlaygroundCallbacks& callb
             if (callbacks.openENVFile)
                 callbacks.openENVFile();
         }
+#ifdef HAS_SUBSTANCE_SDK
+        if (ImGui::Button("Open SBSAR File..."))
+        {
+            if (callbacks.openSBSARFile)
+                callbacks.openSBSARFile();
+        }
+#endif
+#ifdef HAS_SUBSTANCE_SDK
+        ImGui::TextDisabled("or drag & drop .glb / .obj / .env / .sbsar files");
+#else
         ImGui::TextDisabled("or drag & drop .glb / .obj / .env files");
+#endif
     }
 
     // Load Playground section

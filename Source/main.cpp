@@ -31,6 +31,10 @@
 #include "SceneInspector.h"
 #include "PlaygroundPanel.h"
 
+#ifdef HAS_SUBSTANCE_SDK
+#include "SubstanceImporter.h"
+#endif
+
 // ---------------------------------------------------------------------------
 // Babylon Native globals
 // ---------------------------------------------------------------------------
@@ -65,6 +69,10 @@ static bool s_codeSyncDirty = false;
 static SceneInspector::Inspector s_inspector;
 static PlaygroundPanel s_playgroundPanel;
 
+#ifdef HAS_SUBSTANCE_SDK
+static SubstanceImporter s_substanceImporter;
+#endif
+
 // ---------------------------------------------------------------------------
 // Native callback: receive playground code from JS to display in editor
 // ---------------------------------------------------------------------------
@@ -78,6 +86,46 @@ static void NativeSetPlaygroundCode(const Napi::CallbackInfo& info)
     s_pendingCode = std::move(code);
     s_codeSyncDirty = true;
 }
+
+#ifdef HAS_SUBSTANCE_SDK
+// ---------------------------------------------------------------------------
+// Send rendered Substance texture data to JS
+// ---------------------------------------------------------------------------
+static void SendSubstanceTextureToJS(const SubstanceTextureOutput& texOut)
+{
+    if (!runtime)
+        return;
+
+    // Copy pixel data since the callback may be deferred
+    std::vector<uint8_t> pixelData(texOut.data, texOut.data + texOut.dataSize);
+    std::string identifier = texOut.identifier;
+    std::string graphUrl = texOut.graphUrl;
+    uint32_t width = texOut.width;
+    uint32_t height = texOut.height;
+    uint8_t pixelFormat = texOut.pixelFormat;
+    uint8_t channelsOrder = texOut.channelsOrder;
+
+    runtime->Dispatch([pixelData = std::move(pixelData), identifier, graphUrl,
+                       width, height, pixelFormat, channelsOrder](Napi::Env env) {
+        auto fn = env.Global().Get("_onSubstanceTextureReady");
+        if (!fn.IsFunction())
+            return;
+
+        auto ab = Napi::ArrayBuffer::New(env, pixelData.size());
+        std::memcpy(ab.Data(), pixelData.data(), pixelData.size());
+
+        auto info = Napi::Object::New(env);
+        info.Set("identifier", Napi::String::New(env, identifier));
+        info.Set("graphUrl", Napi::String::New(env, graphUrl));
+        info.Set("width", Napi::Number::New(env, width));
+        info.Set("height", Napi::Number::New(env, height));
+        info.Set("pixelFormat", Napi::Number::New(env, pixelFormat));
+        info.Set("channelsOrder", Napi::Number::New(env, channelsOrder));
+
+        fn.As<Napi::Function>().Call({ab, info});
+    });
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Native callback: receive serialized scene data from JS
@@ -201,6 +249,13 @@ static void LoadDroppedFile(const std::string& filePath)
         loaderFunc = "load_obj";
     else if (ext == ".env")
         loaderFunc = "load_env";
+#ifdef HAS_SUBSTANCE_SDK
+    else if (ext == ".sbsar")
+    {
+        s_substanceImporter.LoadSbsarFile(filePath);
+        return;
+    }
+#endif
     else
     {
         std::cout << "Unsupported file type: " << ext << std::endl;
@@ -405,6 +460,11 @@ int main(int argc, char* argv[])
     // Initialize Babylon
     Initialize(window);
 
+#ifdef HAS_SUBSTANCE_SDK
+    s_substanceImporter.SetTextureCallback(SendSubstanceTextureToJS);
+    s_inspector.SetSubstanceImporter(&s_substanceImporter);
+#endif
+
     // Playground panel callbacks
     PlaygroundCallbacks playgroundCallbacks;
     playgroundCallbacks.loadPlayground = [](const std::string& hash) {
@@ -423,6 +483,13 @@ int main(int argc, char* argv[])
             {"Environment Map", "env"}};
         SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, envFilter, 1, nullptr, false);
     };
+#ifdef HAS_SUBSTANCE_SDK
+    playgroundCallbacks.openSBSARFile = [window]() {
+        static const SDL_DialogFileFilter sbsarFilter[] = {
+            {"Substance Archive", "sbsar"}};
+        SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, sbsarFilter, 1, nullptr, false);
+    };
+#endif
 
     bool running = true;
     while (running)

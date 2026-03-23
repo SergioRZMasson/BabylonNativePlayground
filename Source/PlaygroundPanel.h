@@ -13,6 +13,9 @@ struct PlaygroundCallbacks
     std::function<void(const std::string&)> runPlaygroundCode;
     std::function<void()> openGLBFile;
     std::function<void()> openENVFile;
+#ifdef HAS_SUBSTANCE_SDK
+    std::function<void()> openSBSARFile;
+#endif
 };
 
 class PlaygroundPanel
