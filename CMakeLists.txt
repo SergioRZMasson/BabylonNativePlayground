@@ -3,7 +3,12 @@ project(BabylonNativePlayground VERSION 0.1.0)
 
 add_subdirectory(Dependencies)
 
-add_executable(BabylonNativePlayground main.cpp SceneInspector.h)
+add_executable(BabylonNativePlayground
+    Source/main.cpp
+    Source/SceneInspector.h
+    Source/SceneInspector.cpp
+    Source/PlaygroundPanel.h
+    Source/PlaygroundPanel.cpp)
 
 target_link_libraries(BabylonNativePlayground
     PRIVATE AppRuntime
@@ -22,6 +27,14 @@ target_link_libraries(BabylonNativePlayground
     ${BABYLON_NATIVE_PLAYGROUND_EXTENSION_LIBRARIES})
 
 target_compile_features(BabylonNativePlayground PRIVATE cxx_std_20)
+target_include_directories(BabylonNativePlayground PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+
+source_group("Source" FILES
+    Source/main.cpp
+    Source/SceneInspector.h
+    Source/SceneInspector.cpp
+    Source/PlaygroundPanel.h
+    Source/PlaygroundPanel.cpp)
 
 # Copy Babylon.js scripts to build output
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/babylonjs/babylon.max.js")

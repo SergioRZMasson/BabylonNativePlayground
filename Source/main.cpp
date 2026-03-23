@@ -29,6 +29,7 @@
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_babylon.h"
 #include "SceneInspector.h"
+#include "PlaygroundPanel.h"
 
 // ---------------------------------------------------------------------------
 // Babylon Native globals
@@ -45,19 +46,24 @@ static bool s_showImgui = true;
 static SDL_MetalView s_metalView{};
 #endif
 
+// Scene data synchronization (JS → C++)
 static std::mutex s_sceneDataMutex;
 static std::vector<uint8_t> s_sceneDataBuffer;
 static bool s_sceneDataDirty = false;
 static SceneInspector::SceneData s_parsedSceneData;
 
-// Command dispatch state
+// Command dispatch state (C++ → JS)
 static std::mutex s_cmdMutex;
 static std::vector<uint8_t> s_pendingCmdBuffer;
 
-// Code editor sync state
+// Code editor sync state (JS → C++)
 static std::mutex s_codeSyncMutex;
 static std::string s_pendingCode;
 static bool s_codeSyncDirty = false;
+
+// UI components
+static SceneInspector::Inspector s_inspector;
+static PlaygroundPanel s_playgroundPanel;
 
 // ---------------------------------------------------------------------------
 // Native callback: receive playground code from JS to display in editor
@@ -176,7 +182,6 @@ static void LoadDroppedFile(const std::string& filePath)
 {
     if (!runtime) return;
 
-    // Get file extension (lowercase)
     std::string ext;
     auto dotPos = filePath.rfind('.');
     if (dotPos != std::string::npos)
@@ -185,7 +190,6 @@ static void LoadDroppedFile(const std::string& filePath)
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     }
 
-    // Determine loader function name
     std::string loaderFunc;
     if (ext == ".glb" || ext == ".gltf")
         loaderFunc = "load_glb";
@@ -199,7 +203,6 @@ static void LoadDroppedFile(const std::string& filePath)
         return;
     }
 
-    // Read the file into memory
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file.is_open())
     {
@@ -217,7 +220,6 @@ static void LoadDroppedFile(const std::string& filePath)
     }
     file.close();
 
-    // Extract just the filename for display
     std::string fileName = filePath;
     auto slashPos = fileName.find_last_of("\\/");
     if (slashPos != std::string::npos)
@@ -246,7 +248,7 @@ static void LoadDroppedFile(const std::string& filePath)
 }
 
 // ---------------------------------------------------------------------------
-// SDL3 file dialog callback — called when user picks a file
+// SDL3 file dialog callback
 // ---------------------------------------------------------------------------
 static void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int filter)
 {
@@ -398,40 +400,26 @@ int main(int argc, char* argv[])
     // Initialize Babylon
     Initialize(window);
 
-    // Playground hash input buffer
-    static char hashBuf[256] = "";
-
-    // Code editor buffer with a default createScene template
-    static const char* defaultCode =
-        "var createScene = function (engine) {\n"
-        "    var scene = new BABYLON.Scene(engine);\n"
-        "    scene.createDefaultCamera(true, true, true);\n"
-        "    var camera = scene.activeCamera;\n"
-        "    camera.setTarget(BABYLON.Vector3.Zero());\n"
-        "    camera.position = new BABYLON.Vector3(0, 5, -10);\n"
-        "\n"
-        "    var light = new BABYLON.HemisphericLight(\n"
-        "        \"light\", new BABYLON.Vector3(0, 1, 0), scene);\n"
-        "    light.intensity = 0.7;\n"
-        "\n"
-        "    var sphere = BABYLON.MeshBuilder.CreateSphere(\n"
-        "        \"sphere\", { diameter: 2, segments: 32 }, scene);\n"
-        "    sphere.position.y = 1;\n"
-        "\n"
-        "    BABYLON.MeshBuilder.CreateGround(\n"
-        "        \"ground\", { width: 6, height: 6 }, scene);\n"
-        "\n"
-        "    return scene;\n"
-        "};\n";
-
-    static constexpr size_t CODE_BUF_SIZE = 64 * 1024;
-    static char codeBuf[CODE_BUF_SIZE];
-    static bool codeInitialized = false;
-    if (!codeInitialized)
-    {
-        snprintf(codeBuf, CODE_BUF_SIZE, "%s", defaultCode);
-        codeInitialized = true;
-    }
+    // Playground panel callbacks
+    PlaygroundCallbacks playgroundCallbacks;
+    playgroundCallbacks.loadPlayground = [](const std::string& hash) {
+        LoadPlayground(hash);
+    };
+    playgroundCallbacks.runPlaygroundCode = [](const std::string& code) {
+        RunPlaygroundCode(code);
+    };
+    playgroundCallbacks.openGLBFile = [window]() {
+        static const SDL_DialogFileFilter glbFilter[] = {
+            { "glTF Binary", "glb;gltf" }
+        };
+        SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, glbFilter, 1, nullptr, false);
+    };
+    playgroundCallbacks.openENVFile = [window]() {
+        static const SDL_DialogFileFilter envFilter[] = {
+            { "Environment Map", "env" }
+        };
+        SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, envFilter, 1, nullptr, false);
+    };
 
     bool running = true;
     while (running)
@@ -521,93 +509,20 @@ int main(int argc, char* argv[])
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
 
-            // Begin command buffer for this frame
-            SceneInspector::BeginCommands();
-
-            // Playground panel — fixed on the left side
-            float leftPanelWidth = io.DisplaySize.x * 0.2f;
-            if (leftPanelWidth < 280) leftPanelWidth = 280;
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(ImVec2(leftPanelWidth, io.DisplaySize.y));
-            ImGui::Begin("Babylon Native Playground", nullptr,
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoCollapse);
-
-            // =============================================================
-            // Load Assets section
-            // =============================================================
-            if (ImGui::CollapsingHeader("Load Assets", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                if (ImGui::Button("Open GLB File..."))
-                {
-                    static const SDL_DialogFileFilter glbFilter[] = {
-                        { "glTF Binary", "glb;gltf" }
-                    };
-                    SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, glbFilter, 1, nullptr, false);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Open ENV File..."))
-                {
-                    static const SDL_DialogFileFilter envFilter[] = {
-                        { "Environment Map", "env" }
-                    };
-                    SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, envFilter, 1, nullptr, false);
-                }
-                ImGui::TextDisabled("or drag & drop .glb / .obj / .env files");
-            }
-
-            // =============================================================
-            // Load Playground section
-            // =============================================================
-            if (ImGui::CollapsingHeader("Load Playground", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                ImGui::Text("Playground Hash:");
-                ImGui::InputText("##hash", hashBuf, sizeof(hashBuf));
-                ImGui::SameLine();
-                if (ImGui::Button("Load"))
-                {
-                    std::string hash(hashBuf);
-                    if (!hash.empty())
-                        LoadPlayground(hash);
-                }
-            }
-
-            ImGui::Separator();
+            s_inspector.BeginCommands();
 
             // Sync code editor if JS sent new playground code
             {
                 std::lock_guard<std::mutex> lock(s_codeSyncMutex);
                 if (s_codeSyncDirty)
                 {
-                    snprintf(codeBuf, CODE_BUF_SIZE, "%s", s_pendingCode.c_str());
+                    s_playgroundPanel.SyncCode(s_pendingCode);
                     s_codeSyncDirty = false;
                 }
             }
 
-            // =============================================================
-            // Code Editor section
-            // =============================================================
-            ImGui::Separator();
-            ImGui::Text("Code Editor:");
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float editorHeight = avail.y - 80.0f;
-            if (editorHeight < 100.0f) editorHeight = 100.0f;
-            ImGui::InputTextMultiline("##code", codeBuf, CODE_BUF_SIZE,
-                ImVec2(-1.0f, editorHeight),
-                ImGuiInputTextFlags_AllowTabInput);
-
-            if (ImGui::Button("Run Code"))
-            {
-                std::string code(codeBuf);
-                if (!code.empty())
-                    RunPlaygroundCode(code);
-            }
-            ImGui::SameLine();
-            ImGui::Text("%.1f FPS", io.Framerate);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(F1: toggle | Ctrl+R: reset)");
-
-            ImGui::End();
+            // Left panel: playground code editor, hash loading, file loading
+            s_playgroundPanel.Render(io, playgroundCallbacks);
 
             // Parse scene data if new data arrived from JS
             {
@@ -619,23 +534,24 @@ int main(int argc, char* argv[])
                     s_sceneDataDirty = false;
                 }
             }
-            SceneInspector::RenderInspector(s_parsedSceneData);
+
+            // Right panel: scene inspector
+            s_inspector.RenderInspector(s_parsedSceneData);
 
             // Finalize and dispatch commands
-            SceneInspector::EndCommands();
-            if (SceneInspector::HasPendingCommands())
+            s_inspector.EndCommands();
+            if (s_inspector.HasPendingCommands())
             {
                 std::lock_guard<std::mutex> lock(s_cmdMutex);
-                auto* cmdData = SceneInspector::s_cmdWriter.data();
-                auto  cmdSize = SceneInspector::s_cmdWriter.size();
-                s_pendingCmdBuffer.assign(cmdData, cmdData + cmdSize);
+                s_pendingCmdBuffer.assign(
+                    s_inspector.GetCommandData(),
+                    s_inspector.GetCommandData() + s_inspector.GetCommandSize());
             }
 
             ImGui::Render();
             ImGui_ImplBabylon_RenderDrawData(ImGui::GetDrawData());
 
-            // Dispatch commands to JS after render
-            if (SceneInspector::HasPendingCommands())
+            if (s_inspector.HasPendingCommands())
                 DispatchInspectorCommands();
         }
     }

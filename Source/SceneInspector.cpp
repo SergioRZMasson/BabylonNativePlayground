@@ -1,516 +1,91 @@
-#pragma once
-
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
-#include "imgui.h"
+#include "SceneInspector.h"
 
 namespace SceneInspector
 {
 
-static constexpr uint32_t MAGIC   = 0x42534E44; // "BSND"
-static constexpr uint32_t VERSION = 2;
+// ===========================================================================
+// Name helpers
+// ===========================================================================
+const char* CameraTypeName(uint8_t type)
+{
+    switch (type)
+    {
+    case 0:  return "Free/Universal";
+    case 1:  return "ArcRotate";
+    case 2:  return "Follow";
+    default: return "Camera";
+    }
+}
 
-static constexpr uint32_t CMD_MAGIC   = 0x434D4432; // "CMD2"
-static constexpr uint32_t CMD_VERSION = 1;
+const char* LightTypeName(uint8_t type)
+{
+    switch (type)
+    {
+    case 0:  return "Point";
+    case 1:  return "Directional";
+    case 2:  return "Spot";
+    case 3:  return "Hemispheric";
+    default: return "Light";
+    }
+}
 
-static constexpr float RAD2DEG = 57.2957795f;
-static constexpr float DEG2RAD = 0.0174532925f;
-static constexpr float FLT_BIG = 3.402823e+38f;
+const char* FogModeName(uint8_t mode)
+{
+    switch (mode)
+    {
+    case 0:  return "None";
+    case 1:  return "Linear";
+    case 2:  return "Exponential";
+    case 3:  return "Exponential2";
+    default: return "Unknown";
+    }
+}
+
+const char* TransparencyModeName(int32_t mode)
+{
+    switch (mode)
+    {
+    case -1: return "Engine Default";
+    case 0:  return "Opaque";
+    case 1:  return "Alpha Test";
+    case 2:  return "Alpha Blend";
+    case 3:  return "Alpha Test + Blend";
+    default: return "Unknown";
+    }
+}
+
+const char* CoordinatesModeName(uint8_t mode)
+{
+    static const char* names[] = {"Explicit", "Spherical", "Planar", "Cubic",
+                                  "Projection", "Skybox", "InvCubic", "Equirect", "FixedEquirect"};
+    return mode < 9 ? names[mode] : "Unknown";
+}
 
 // ===========================================================================
-// Command types (must match JS constants)
+// Widget helpers
 // ===========================================================================
-enum InspectorCmd : uint8_t
+void AttributeBadge(const char* name, bool has)
 {
-    CMD_SET_POSITION            = 0x01,
-    CMD_SET_ROTATION            = 0x02,
-    CMD_SET_SCALING             = 0x03,
-    CMD_SET_ENABLED             = 0x10,
-    CMD_SET_VISIBLE             = 0x11,
-    CMD_SET_WIREFRAME           = 0x12,
-    CMD_SET_BACK_FACE_CULLING   = 0x13,
-    CMD_SET_RECEIVE_SHADOWS     = 0x14,
-    CMD_SET_POINTS_CLOUD_MAT    = 0x15,
-    CMD_SET_DISABLE_DEPTH_WRITE = 0x16,
-    CMD_SET_FORCE_DEPTH_WRITE   = 0x17,
-    CMD_SET_AUTO_CLEAR          = 0x18,
-    CMD_SET_SHADOW_ENABLED      = 0x19,
-    CMD_SET_ALPHA               = 0x20,
-    CMD_SET_VISIBILITY          = 0x21,
-    CMD_SET_INTENSITY           = 0x22,
-    CMD_SET_FOV                 = 0x23,
-    CMD_SET_MIN_Z               = 0x24,
-    CMD_SET_MAX_Z               = 0x25,
-    CMD_SET_INERTIA             = 0x26,
-    CMD_SET_SPEED               = 0x27,
-    CMD_SET_RANGE               = 0x28,
-    CMD_SET_SPOT_ANGLE          = 0x29,
-    CMD_SET_INNER_ANGLE         = 0x2A,
-    CMD_SET_EXPONENT            = 0x2B,
-    CMD_SET_ALPHA_CUTOFF        = 0x2C,
-    CMD_SET_Z_OFFSET            = 0x2D,
-    CMD_SET_Z_OFFSET_UNITS      = 0x2E,
-    CMD_SET_METALLIC            = 0x2F,
-    CMD_SET_ROUGHNESS           = 0x30,
-    CMD_SET_ENV_INTENSITY       = 0x31,
-    CMD_SET_CONTRAST            = 0x32,
-    CMD_SET_EXPOSURE            = 0x33,
-    CMD_SET_SPEED_RATIO         = 0x34,
-    CMD_SET_ARC_ALPHA           = 0x35,
-    CMD_SET_ARC_BETA            = 0x36,
-    CMD_SET_ARC_RADIUS          = 0x37,
-    CMD_SET_FOG_DENSITY         = 0x38,
-    CMD_SET_FOG_START           = 0x39,
-    CMD_SET_FOG_END             = 0x3A,
-    CMD_SET_LAYER_MASK          = 0x3B,
-    CMD_SET_TEXTURE_LEVEL       = 0x3C,
-    CMD_SET_MORPH_INFLUENCE     = 0x3D,
-    CMD_SET_SHADOW_BIAS         = 0x3E,
-    CMD_SET_SHADOW_NORMAL_BIAS  = 0x3F,
-    CMD_SET_DIFFUSE_COLOR       = 0x40,
-    CMD_SET_SPECULAR_COLOR      = 0x41,
-    CMD_SET_EMISSIVE_COLOR      = 0x42,
-    CMD_SET_AMBIENT_COLOR       = 0x43,
-    CMD_SET_LIGHT_DIFFUSE       = 0x44,
-    CMD_SET_LIGHT_SPECULAR      = 0x45,
-    CMD_SET_FOG_COLOR           = 0x46,
-    CMD_SET_SCENE_AMBIENT       = 0x47,
-    CMD_SET_CLEAR_COLOR         = 0x50,
-    CMD_SET_DIRECTION           = 0x60,
-    CMD_SET_TARGET              = 0x61,
-    CMD_SET_GRAVITY             = 0x62,
-    CMD_SET_TRANSPARENCY_MODE   = 0x70,
-    CMD_SET_FOG_MODE            = 0x71,
-    CMD_SET_TONE_MAPPING_TYPE   = 0x72,
-    CMD_SET_CAMERA_MODE         = 0x73,
-    CMD_SET_NAME                = 0x80,
-    CMD_DISPOSE_ENTITY          = 0x90,
-    CMD_ANIM_PLAY               = 0x91,
-    CMD_ANIM_PAUSE              = 0x92,
-    CMD_ANIM_STOP               = 0x93,
-    CMD_SKELETON_RETURN_TO_REST = 0x94,
-    CMD_SET_FORCE_WIREFRAME     = 0x95,
-    CMD_SET_FORCE_POINTS_CLOUD  = 0x96,
-    CMD_DEBUG_TOGGLE_GRID       = 0xA0,
-    CMD_DEBUG_TOGGLE_NAMES      = 0xA1,
-    CMD_DEBUG_TOGGLE_PHYSICS    = 0xA2,
-    CMD_DEBUG_TOGGLE_BBOX       = 0xA4,
-    CMD_DEBUG_TOGGLE_AXES       = 0xA5,
-    CMD_DEBUG_SET_TEX_CHANNEL   = 0xA6,
-    CMD_DEBUG_TOGGLE_ANIMATIONS = 0xA7,
-    CMD_DEBUG_TOGGLE_PARTICLES  = 0xA8,
-    CMD_DEBUG_TOGGLE_FOG        = 0xA9,
-    CMD_DEBUG_TOGGLE_SHADOWS    = 0xAA,
-    CMD_DEBUG_TOGGLE_LIGHTS     = 0xAB,
-    CMD_DEBUG_TOGGLE_POSTPROC   = 0xAC,
-    CMD_DEBUG_TOGGLE_SKELETONS  = 0xAD,
-    CMD_SET_ANIM_FRAME          = 0xB0,
-    CMD_SET_ANIM_LOOP           = 0xB1,
-    CMD_SELECT_ENTITY           = 0xC0,
-};
+    if (has)
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "%s", name);
+    else
+        ImGui::TextDisabled("%s", name);
+    ImGui::SameLine();
+}
 
-// ===========================================================================
-// Binary reader with bounds checking
-// ===========================================================================
-class BinaryReader
+bool CaseInsensitiveContains(const std::string& haystack, const char* needle)
 {
-    const uint8_t* m_data;
-    size_t m_size;
-    size_t m_pos   = 0;
-    bool   m_error = false;
-
-    void ensureAvailable(size_t n)
-    {
-        if (m_pos + n > m_size) m_error = true;
-    }
-
-public:
-    BinaryReader(const uint8_t* data, size_t size)
-        : m_data(data), m_size(size) {}
-
-    bool valid() const { return !m_error; }
-
-    uint8_t readU8()
-    {
-        ensureAvailable(1);
-        if (m_error) return 0;
-        return m_data[m_pos++];
-    }
-
-    uint16_t readU16()
-    {
-        ensureAvailable(2);
-        if (m_error) return 0;
-        uint16_t val;
-        std::memcpy(&val, m_data + m_pos, 2);
-        m_pos += 2;
-        return val;
-    }
-
-    uint32_t readU32()
-    {
-        ensureAvailable(4);
-        if (m_error) return 0;
-        uint32_t val;
-        std::memcpy(&val, m_data + m_pos, 4);
-        m_pos += 4;
-        return val;
-    }
-
-    int32_t readI32()
-    {
-        ensureAvailable(4);
-        if (m_error) return 0;
-        int32_t val;
-        std::memcpy(&val, m_data + m_pos, 4);
-        m_pos += 4;
-        return val;
-    }
-
-    float readF32()
-    {
-        ensureAvailable(4);
-        if (m_error) return 0.0f;
-        float val;
-        std::memcpy(&val, m_data + m_pos, 4);
-        m_pos += 4;
-        return val;
-    }
-
-    std::string readString()
-    {
-        uint16_t len = readU16();
-        if (m_error) return "";
-        ensureAvailable(len);
-        if (m_error) return "";
-        std::string s(reinterpret_cast<const char*>(m_data + m_pos), len);
-        m_pos += len;
-        return s;
-    }
-
-    void readVec3(float out[3])
-    {
-        out[0] = readF32();
-        out[1] = readF32();
-        out[2] = readF32();
-    }
-
-    void readVec4(float out[4])
-    {
-        out[0] = readF32();
-        out[1] = readF32();
-        out[2] = readF32();
-        out[3] = readF32();
-    }
-
-    void readColor4(float out[4])
-    {
-        out[0] = readF32();
-        out[1] = readF32();
-        out[2] = readF32();
-        out[3] = readF32();
-    }
-};
-
-// ===========================================================================
-// Binary writer for command buffer
-// ===========================================================================
-class BinaryWriter
-{
-    std::vector<uint8_t> m_buf;
-
-public:
-    BinaryWriter() { m_buf.reserve(16384); }
-
-    void clear() { m_buf.clear(); }
-    const uint8_t* data() const { return m_buf.data(); }
-    size_t size() const { return m_buf.size(); }
-    bool empty() const { return m_buf.empty(); }
-
-    void writeU8(uint8_t v) { m_buf.push_back(v); }
-
-    void writeU16(uint16_t v)
-    {
-        m_buf.resize(m_buf.size() + 2);
-        std::memcpy(m_buf.data() + m_buf.size() - 2, &v, 2);
-    }
-
-    void writeU32(uint32_t v)
-    {
-        m_buf.resize(m_buf.size() + 4);
-        std::memcpy(m_buf.data() + m_buf.size() - 4, &v, 4);
-    }
-
-    void writeI32(int32_t v)
-    {
-        m_buf.resize(m_buf.size() + 4);
-        std::memcpy(m_buf.data() + m_buf.size() - 4, &v, 4);
-    }
-
-    void writeF32(float v)
-    {
-        m_buf.resize(m_buf.size() + 4);
-        std::memcpy(m_buf.data() + m_buf.size() - 4, &v, 4);
-    }
-
-    void writeVec3(const float v[3])
-    {
-        writeF32(v[0]); writeF32(v[1]); writeF32(v[2]);
-    }
-
-    void writeColor3(const float c[3])
-    {
-        writeF32(c[0]); writeF32(c[1]); writeF32(c[2]);
-    }
-
-    void writeColor4(const float c[4])
-    {
-        writeF32(c[0]); writeF32(c[1]); writeF32(c[2]); writeF32(c[3]);
-    }
-
-    void writeString(const std::string& s)
-    {
-        uint16_t len = static_cast<uint16_t>(s.size() > 65535 ? 65535 : s.size());
-        writeU16(len);
-        m_buf.insert(m_buf.end(), s.begin(), s.begin() + len);
-    }
-
-    // Write placeholder at position, return position for later patching
-    size_t writePlaceholderU32()
-    {
-        size_t pos = m_buf.size();
-        writeU32(0);
-        return pos;
-    }
-
-    void patchU32(size_t pos, uint32_t v)
-    {
-        std::memcpy(m_buf.data() + pos, &v, 4);
-    }
-};
-
-// ===========================================================================
-// Data structures (v2)
-// ===========================================================================
-struct CameraInfo
-{
-    uint32_t uniqueId{};
-    uint32_t parentId{};
-    std::string name;
-    std::string className;
-    uint8_t type{}; // 0=free, 1=arc, 2=follow, 3=other
-    float position[3]{};
-    float target[3]{};
-    float fov{};
-    float minZ{}, maxZ{};
-    bool isActive{};
-    float inertia{};
-    float speed{};
-    uint8_t mode{}; // 0=perspective, 1=ortho
-    bool isArcRotate{};
-    float alpha{}, beta{}, radius{};
-    float lowerAlphaLimit{-FLT_BIG}, upperAlphaLimit{FLT_BIG};
-    float lowerBetaLimit{0.01f}, upperBetaLimit{3.1316f};
-    float lowerRadiusLimit{0}, upperRadiusLimit{FLT_BIG};
-};
-
-struct NodeInfo
-{
-    uint32_t uniqueId{};
-    uint32_t parentId{};
-    std::string name;
-    std::string className;
-    float position[3]{};
-    bool hasQuaternion{};
-    float rotation[4]{};
-    float scaling[3]{};
-    bool isEnabled{};
-};
-
-struct MorphTarget
-{
-    std::string name;
-    float influence{};
-};
-
-struct MeshInfo
-{
-    uint32_t uniqueId{};
-    uint32_t parentId{};
-    std::string name;
-    std::string className;
-    float position[3]{};
-    bool hasQuaternion{};
-    float rotation[4]{};
-    float scaling[3]{};
-    bool isEnabled{};
-    bool isVisible{};
-    float visibility{1.0f};
-    bool receiveShadows{};
-    uint32_t layerMask{0x0FFFFFFF};
-    uint32_t totalVertices{};
-    uint32_t totalIndices{};
-    bool hasPositions{}, hasNormals{}, hasTangents{};
-    bool hasUVs{}, hasUV2s{}, hasColors{};
-    bool hasBoundingBox{};
-    float bbMin[3]{}, bbMax[3]{};
-    int32_t materialUniqueId{-1};
-    std::vector<MorphTarget> morphTargets;
-};
-
-struct TextureSlot
-{
-    std::string slotName;
-    std::string textureName;
-    int32_t textureUniqueId{-1};
-};
-
-struct MaterialInfo
-{
-    uint32_t uniqueId{};
-    std::string name;
-    std::string typeName;
-    float alpha{1.0f};
-    bool backFaceCulling{}, wireframe{}, pointsCloud{};
-    bool disableDepthWrite{}, forceDepthWrite{};
-    float zOffset{}, zOffsetUnits{};
-    int32_t transparencyMode{-1};
-    float alphaCutOff{0.4f};
-    float diffuseColor[3]{};
-    float specularColor[3]{};
-    float emissiveColor[3]{};
-    float ambientColor[3]{};
-    bool isPBR{};
-    float metallic{}, roughness{1.0f}, environmentIntensity{1.0f};
-    std::vector<TextureSlot> textureSlots;
-};
-
-struct TextureInfo
-{
-    uint32_t uniqueId{};
-    std::string name;
-    std::string className;
-    std::string url;
-    int32_t width{-1}, height{-1};
-    bool hasAlpha{}, isCube{}, gammaSpace{};
-    uint8_t coordinatesMode{};
-    uint8_t samplingMode{};
-    float uOffset{}, vOffset{};
-    float uScale{1}, vScale{1};
-    float level{1};
-};
-
-struct LightInfo
-{
-    uint32_t uniqueId{};
-    uint32_t parentId{};
-    std::string name;
-    std::string className;
-    uint8_t type{}; // 0=point, 1=directional, 2=spot, 3=hemispheric
-    float position[3]{};
-    float direction[3]{};
-    float intensity{};
-    float diffuse[3]{};
-    float specular[3]{};
-    bool isEnabled{};
-    float range{};
-    bool isSpot{};
-    float spotAngle{}, innerAngle{}, exponent{};
-    bool hasShadowGen{};
-    float shadowCasterCount{};
-    float shadowBias{}, shadowNormalBias{};
-};
-
-struct AnimGroupInfo
-{
-    uint32_t index{};
-    std::string name;
-    bool isPlaying{};
-    float speedRatio{1.0f};
-    float from{}, to{};
-    bool loopAnimation{};
-    float currentFrame{};
-};
-
-struct SkeletonInfo
-{
-    uint32_t index{};
-    std::string name;
-    uint32_t boneCount{};
-    bool useTextureForBones{};
-};
-
-struct SceneProperties
-{
-    float clearColor[4]{0, 0, 0, 1};
-    float ambientColor[3]{};
-    uint8_t fogMode{}; // 0=none, 1=linear, 2=exp, 3=exp2
-    float fogColor[3]{};
-    float fogDensity{};
-    float fogStart{};
-    float fogEnd{};
-    bool forceWireframe{};
-    bool forcePointsCloud{};
-    bool autoClear{true};
-    float gravity[3]{};
-    bool hasImageProcessing{};
-    float contrast{1.0f};
-    float exposure{1.0f};
-    bool toneMappingEnabled{};
-    uint8_t toneMappingType{};
-    bool vignetteEnabled{};
-};
-
-struct StatsData
-{
-    float fps{};
-    uint32_t totalVertices{};
-    uint32_t activeIndices{};
-    uint32_t activeMeshes{};
-    uint32_t activeParticles{};
-    uint32_t activeBones{};
-    uint32_t drawCalls{};
-    float frameTime{};
-    float interFrameTime{};
-    float renderTime{};
-    float cameraRenderTime{};
-    float activeMeshesEvalTime{};
-    float renderTargetsTime{};
-    float particlesTime{};
-    float spritesTime{};
-    float animationsTime{};
-    float physicsTime{};
-    std::string engineVersion;
-    float hardwareScaling{1.0f};
-    int32_t renderWidth{}, renderHeight{};
-};
-
-struct SceneData
-{
-    bool valid = false;
-    SceneProperties scene;
-    StatsData stats;
-    std::vector<CameraInfo>    cameras;
-    std::vector<NodeInfo>      nodes;
-    std::vector<MeshInfo>      meshes;
-    std::vector<MaterialInfo>  materials;
-    std::vector<TextureInfo>   textures;
-    std::vector<LightInfo>     lights;
-    std::vector<AnimGroupInfo> animGroups;
-    std::vector<SkeletonInfo>  skeletons;
-};
+    if (!needle || needle[0] == '\0') return true;
+    std::string h = haystack, n = needle;
+    std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+    return h.find(n) != std::string::npos;
+}
 
 // ===========================================================================
 // Parse binary buffer into SceneData (v2)
 // ===========================================================================
-inline SceneData Parse(const uint8_t* data, size_t size)
+SceneData Parse(const uint8_t* data, size_t size)
 {
     SceneData sd;
     if (!data || size < 40) return sd;
@@ -812,196 +387,100 @@ inline SceneData Parse(const uint8_t* data, size_t size)
 }
 
 // ===========================================================================
-// Inspector UI State
+// Inspector — command helpers
 // ===========================================================================
-enum class EntityType : uint8_t { None, Scene, Camera, Node, Mesh, Material, Texture, Light, AnimGroup, Skeleton };
-
-struct SelectedEntity
+void Inspector::BeginCommands()
 {
-    EntityType type = EntityType::None;
-    uint32_t   uniqueId = 0;
-    size_t     index = 0;
-};
-
-struct InspectorState
-{
-    SelectedEntity selected;
-    int activeTab = 0; // 0=Explorer, 1=Properties, 2=Stats, 3=Debug
-    char searchBuf[128] = "";
-    bool autoSwitchToProps = true;
-
-    // Debug toggles (local UI state)
-    bool debugGrid = false;
-    bool debugNames = false;
-    bool debugPhysics = false;
-    bool debugBBox = false;
-    bool debugAxes = false;
-    bool debugAnimations = true;
-    bool debugParticles = true;
-    bool debugFog = true;
-    bool debugShadows = true;
-    bool debugLights = true;
-    bool debugPostProc = true;
-    bool debugSkeletons = true;
-    bool texChannels[9] = {true, true, true, true, true, true, true, true, true};
-
-    // FPS graph
-    float fpsHistory[120] = {};
-    int fpsHistoryIdx = 0;
-};
-
-// Global state
-static InspectorState s_state;
-static BinaryWriter s_cmdWriter;
-static uint32_t s_cmdCount = 0;
-
-// ===========================================================================
-// Command helpers
-// ===========================================================================
-inline void BeginCommands()
-{
-    s_cmdWriter.clear();
-    s_cmdCount = 0;
-    s_cmdWriter.writeU32(CMD_MAGIC);
-    s_cmdWriter.writeU32(CMD_VERSION);
-    s_cmdWriter.writePlaceholderU32(); // command count placeholder
+    m_cmdWriter.clear();
+    m_cmdCount = 0;
+    m_cmdWriter.writeU32(CMD_MAGIC);
+    m_cmdWriter.writeU32(CMD_VERSION);
+    m_cmdWriter.writePlaceholderU32(); // command count placeholder
 }
 
-inline void EndCommands()
+void Inspector::EndCommands()
 {
-    if (s_cmdCount > 0)
-        s_cmdWriter.patchU32(8, s_cmdCount);
+    if (m_cmdCount > 0)
+        m_cmdWriter.patchU32(8, m_cmdCount);
 }
 
-inline bool HasPendingCommands()
+bool Inspector::HasPendingCommands() const
 {
-    return s_cmdCount > 0;
+    return m_cmdCount > 0;
 }
 
-inline void EmitCmd(InspectorCmd cmd, uint32_t uid)
+const uint8_t* Inspector::GetCommandData() const
 {
-    s_cmdWriter.writeU8(static_cast<uint8_t>(cmd));
-    s_cmdWriter.writeU32(uid);
-    s_cmdCount++;
+    return m_cmdWriter.data();
 }
 
-inline void EmitCmdBool(InspectorCmd cmd, uint32_t uid, bool val)
+size_t Inspector::GetCommandSize() const
+{
+    return m_cmdWriter.size();
+}
+
+void Inspector::EmitCmd(InspectorCmd cmd, uint32_t uid)
+{
+    m_cmdWriter.writeU8(static_cast<uint8_t>(cmd));
+    m_cmdWriter.writeU32(uid);
+    m_cmdCount++;
+}
+
+void Inspector::EmitCmdBool(InspectorCmd cmd, uint32_t uid, bool val)
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeU8(val ? 1 : 0);
+    m_cmdWriter.writeU8(val ? 1 : 0);
 }
 
-inline void EmitCmdFloat(InspectorCmd cmd, uint32_t uid, float val)
+void Inspector::EmitCmdFloat(InspectorCmd cmd, uint32_t uid, float val)
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeF32(val);
+    m_cmdWriter.writeF32(val);
 }
 
-inline void EmitCmdVec3(InspectorCmd cmd, uint32_t uid, const float v[3])
+void Inspector::EmitCmdVec3(InspectorCmd cmd, uint32_t uid, const float v[3])
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeVec3(v);
+    m_cmdWriter.writeVec3(v);
 }
 
-inline void EmitCmdColor3(InspectorCmd cmd, uint32_t uid, const float c[3])
+void Inspector::EmitCmdColor3(InspectorCmd cmd, uint32_t uid, const float c[3])
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeColor3(c);
+    m_cmdWriter.writeColor3(c);
 }
 
-inline void EmitCmdColor4(InspectorCmd cmd, uint32_t uid, const float c[4])
+void Inspector::EmitCmdColor4(InspectorCmd cmd, uint32_t uid, const float c[4])
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeColor4(c);
+    m_cmdWriter.writeColor4(c);
 }
 
-inline void EmitCmdInt(InspectorCmd cmd, uint32_t uid, int32_t val)
+void Inspector::EmitCmdInt(InspectorCmd cmd, uint32_t uid, int32_t val)
 {
     EmitCmd(cmd, uid);
-    s_cmdWriter.writeI32(val);
+    m_cmdWriter.writeI32(val);
 }
 
 // ===========================================================================
-// Name helpers
+// Inspector — selection helpers
 // ===========================================================================
-inline const char* CameraTypeName(uint8_t type)
+void Inspector::SelectEntity(EntityType type, uint32_t uid, size_t idx)
 {
-    switch (type)
-    {
-    case 0:  return "Free/Universal";
-    case 1:  return "ArcRotate";
-    case 2:  return "Follow";
-    default: return "Camera";
-    }
+    m_selected = {type, uid, idx};
+    if (m_autoSwitchToProps)
+        m_activeTab = 1;
 }
 
-inline const char* LightTypeName(uint8_t type)
+bool Inspector::IsSelected(EntityType type, uint32_t uid) const
 {
-    switch (type)
-    {
-    case 0:  return "Point";
-    case 1:  return "Directional";
-    case 2:  return "Spot";
-    case 3:  return "Hemispheric";
-    default: return "Light";
-    }
-}
-
-inline const char* FogModeName(uint8_t mode)
-{
-    switch (mode)
-    {
-    case 0:  return "None";
-    case 1:  return "Linear";
-    case 2:  return "Exponential";
-    case 3:  return "Exponential2";
-    default: return "Unknown";
-    }
-}
-
-inline const char* TransparencyModeName(int32_t mode)
-{
-    switch (mode)
-    {
-    case -1: return "Engine Default";
-    case 0:  return "Opaque";
-    case 1:  return "Alpha Test";
-    case 2:  return "Alpha Blend";
-    case 3:  return "Alpha Test + Blend";
-    default: return "Unknown";
-    }
-}
-
-inline const char* CoordinatesModeName(uint8_t mode)
-{
-    const char* names[] = {"Explicit", "Spherical", "Planar", "Cubic",
-                           "Projection", "Skybox", "InvCubic", "Equirect", "FixedEquirect"};
-    return mode < 9 ? names[mode] : "Unknown";
+    return m_selected.type == type && m_selected.uniqueId == uid;
 }
 
 // ===========================================================================
-// UI Widget helpers
+// Inspector — UI widget helpers
 // ===========================================================================
-inline void AttributeBadge(const char* name, bool has)
-{
-    if (has)
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "%s", name);
-    else
-        ImGui::TextDisabled("%s", name);
-    ImGui::SameLine();
-}
-
-inline bool CaseInsensitiveContains(const std::string& haystack, const char* needle)
-{
-    if (!needle || needle[0] == '\0') return true;
-    std::string h = haystack, n = needle;
-    std::transform(h.begin(), h.end(), h.begin(), ::tolower);
-    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-    return h.find(n) != std::string::npos;
-}
-
-// Editable DragFloat3 that emits a command on change
-inline bool EditVec3(const char* label, float v[3], uint32_t uid, InspectorCmd cmd, float speed = 0.05f)
+bool Inspector::EditVec3(const char* label, float v[3], uint32_t uid, InspectorCmd cmd, float speed)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1018,8 +497,8 @@ inline bool EditVec3(const char* label, float v[3], uint32_t uid, InspectorCmd c
     return false;
 }
 
-inline bool EditFloat(const char* label, float* v, uint32_t uid, InspectorCmd cmd,
-                       float speed = 0.01f, float mn = 0, float mx = 0, const char* fmt = "%.3f")
+bool Inspector::EditFloat(const char* label, float* v, uint32_t uid, InspectorCmd cmd,
+                           float speed, float mn, float mx, const char* fmt)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1036,8 +515,8 @@ inline bool EditFloat(const char* label, float* v, uint32_t uid, InspectorCmd cm
     return false;
 }
 
-inline bool EditSlider(const char* label, float* v, uint32_t uid, InspectorCmd cmd,
-                        float mn, float mx, const char* fmt = "%.3f")
+bool Inspector::EditSlider(const char* label, float* v, uint32_t uid, InspectorCmd cmd,
+                            float mn, float mx, const char* fmt)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1054,7 +533,7 @@ inline bool EditSlider(const char* label, float* v, uint32_t uid, InspectorCmd c
     return false;
 }
 
-inline bool EditColor3(const char* label, float c[3], uint32_t uid, InspectorCmd cmd)
+bool Inspector::EditColor3(const char* label, float c[3], uint32_t uid, InspectorCmd cmd)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1071,7 +550,7 @@ inline bool EditColor3(const char* label, float c[3], uint32_t uid, InspectorCmd
     return false;
 }
 
-inline bool EditColor4(const char* label, float c[4], uint32_t uid, InspectorCmd cmd)
+bool Inspector::EditColor4(const char* label, float c[4], uint32_t uid, InspectorCmd cmd)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1088,7 +567,7 @@ inline bool EditColor4(const char* label, float c[4], uint32_t uid, InspectorCmd
     return false;
 }
 
-inline bool EditBool(const char* label, bool* v, uint32_t uid, InspectorCmd cmd)
+bool Inspector::EditBool(const char* label, bool* v, uint32_t uid, InspectorCmd cmd)
 {
     char id[64];
     snprintf(id, sizeof(id), "###%s_%u", label, uid);
@@ -1103,22 +582,9 @@ inline bool EditBool(const char* label, bool* v, uint32_t uid, InspectorCmd cmd)
 }
 
 // ===========================================================================
-// Selection helpers
+// Inspector — tree/graph helpers
 // ===========================================================================
-inline void SelectEntity(EntityType type, uint32_t uid, size_t idx)
-{
-    s_state.selected = {type, uid, idx};
-    if (s_state.autoSwitchToProps)
-        s_state.activeTab = 1;
-}
-
-inline bool IsSelected(EntityType type, uint32_t uid)
-{
-    return s_state.selected.type == type && s_state.selected.uniqueId == uid;
-}
-
-// Flat list item (for Materials, Textures, AnimGroups, Skeletons)
-inline void RenderTreeItem(const char* label, EntityType type, uint32_t uid, size_t idx)
+void Inspector::RenderTreeItem(const char* label, EntityType type, uint32_t uid, size_t idx)
 {
     ImGui::PushID(static_cast<int>(uid));
     bool selected = IsSelected(type, uid);
@@ -1131,27 +597,7 @@ inline void RenderTreeItem(const char* label, EntityType type, uint32_t uid, siz
     ImGui::PopID();
 }
 
-// ===========================================================================
-// Scene Graph Tree — build unified hierarchy from all entity types
-// ===========================================================================
-struct SceneGraphNode
-{
-    EntityType type;
-    uint32_t uniqueId;
-    uint32_t parentId;
-    std::string name;
-    std::string typeName;
-    std::vector<size_t> children;
-};
-
-struct SceneGraph
-{
-    std::vector<SceneGraphNode> nodes;
-    std::vector<size_t> roots;
-    std::unordered_map<uint32_t, size_t> idMap;
-};
-
-inline SceneGraph BuildSceneGraph(const SceneData& data)
+Inspector::SceneGraph Inspector::BuildSceneGraph(const SceneData& data)
 {
     SceneGraph g;
 
@@ -1183,8 +629,7 @@ inline SceneGraph BuildSceneGraph(const SceneData& data)
     return g;
 }
 
-// Check if node or any descendant matches the search filter
-inline bool HasFilterMatch(const SceneGraph& g, size_t idx, const char* filter)
+bool Inspector::HasFilterMatch(const SceneGraph& g, size_t idx, const char* filter)
 {
     if (CaseInsensitiveContains(g.nodes[idx].name, filter)) return true;
     for (size_t ci : g.nodes[idx].children)
@@ -1192,7 +637,7 @@ inline bool HasFilterMatch(const SceneGraph& g, size_t idx, const char* filter)
     return false;
 }
 
-inline void RenderGraphNode(const SceneGraph& g, size_t idx, const char* filter, SceneData& data)
+void Inspector::RenderGraphNode(const SceneGraph& g, size_t idx, const char* filter, SceneData& data)
 {
     auto& node = g.nodes[idx];
 
@@ -1236,14 +681,14 @@ inline void RenderGraphNode(const SceneGraph& g, size_t idx, const char* filter,
 }
 
 // ===========================================================================
-// Scene Explorer — hierarchical scene graph + resource lists
+// Inspector — Scene Explorer
 // ===========================================================================
-inline void RenderSceneExplorer(SceneData& data)
+void Inspector::RenderSceneExplorer(SceneData& data)
 {
-    const char* filter = s_state.searchBuf;
+    const char* filter = m_searchBuf;
 
     ImGui::PushItemWidth(-1);
-    ImGui::InputTextWithHint("###search", "Search...", s_state.searchBuf, sizeof(s_state.searchBuf));
+    ImGui::InputTextWithHint("###search", "Search...", m_searchBuf, sizeof(m_searchBuf));
     ImGui::PopItemWidth();
     ImGui::Separator();
 
@@ -1256,7 +701,7 @@ inline void RenderSceneExplorer(SceneData& data)
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
         {
             SelectEntity(EntityType::Scene, 0, 0);
-            EmitCmd(CMD_SELECT_ENTITY, 0); // clear highlight
+            EmitCmd(CMD_SELECT_ENTITY, 0);
         }
     }
 
@@ -1272,7 +717,7 @@ inline void RenderSceneExplorer(SceneData& data)
         ImGui::TreePop();
     }
 
-    // --- Resource lists (not part of node hierarchy) ---
+    // --- Resource lists ---
 
     // Materials
     snprintf(hdr, sizeof(hdr), "Materials (%zu)###mat_sec", data.materials.size());
@@ -1346,9 +791,9 @@ inline void RenderSceneExplorer(SceneData& data)
 }
 
 // ===========================================================================
-// Properties panel rendering
+// Inspector — Properties panel
 // ===========================================================================
-inline void RenderSceneProps(SceneData& data)
+void Inspector::RenderSceneProps(SceneData& data)
 {
     auto& sp = data.scene;
 
@@ -1413,7 +858,7 @@ inline void RenderSceneProps(SceneData& data)
     }
 }
 
-inline void RenderCameraProps(CameraInfo& cam)
+void Inspector::RenderCameraProps(CameraInfo& cam)
 {
     uint32_t uid = cam.uniqueId;
 
@@ -1437,7 +882,6 @@ inline void RenderCameraProps(CameraInfo& cam)
         float fovDeg = cam.fov * RAD2DEG;
         if (EditFloat("FOV (deg)", &fovDeg, uid, CMD_SET_FOV, 0.5f, 1, 179))
             cam.fov = fovDeg * DEG2RAD;
-        // Emit actual radian value
         if (ImGui::IsItemDeactivatedAfterEdit())
             EmitCmdFloat(CMD_SET_FOV, uid, cam.fov);
 
@@ -1477,17 +921,15 @@ inline void RenderCameraProps(CameraInfo& cam)
     }
 }
 
-inline void RenderTransformProps(float pos[3], float rot[4], float scl[3], bool hasQuat, uint32_t uid)
+void Inspector::RenderTransformProps(float pos[3], float rot[4], float scl[3], bool hasQuat, uint32_t uid)
 {
     if (ImGui::CollapsingHeader("Transform###xf", ImGuiTreeNodeFlags_DefaultOpen))
     {
         EditVec3("Position", pos, uid, CMD_SET_POSITION);
 
-        // Show euler rotation even for quaternion (convert for display)
         float euler[3];
         if (hasQuat)
         {
-            // Quaternion to euler (approximate)
             float qx = rot[0], qy = rot[1], qz = rot[2], qw = rot[3];
             float sinr = 2.0f * (qw * qx + qy * qz);
             float cosr = 1.0f - 2.0f * (qx * qx + qy * qy);
@@ -1520,7 +962,7 @@ inline void RenderTransformProps(float pos[3], float rot[4], float scl[3], bool 
     }
 }
 
-inline void RenderNodeProps(NodeInfo& node)
+void Inspector::RenderNodeProps(NodeInfo& node)
 {
     uint32_t uid = node.uniqueId;
     if (ImGui::CollapsingHeader("General###np_gen", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1533,7 +975,7 @@ inline void RenderNodeProps(NodeInfo& node)
     RenderTransformProps(node.position, node.rotation, node.scaling, node.hasQuaternion, uid);
 }
 
-inline void RenderMeshProps(MeshInfo& mesh, const SceneData& data)
+void Inspector::RenderMeshProps(MeshInfo& mesh, const SceneData& data)
 {
     uint32_t uid = mesh.uniqueId;
 
@@ -1562,7 +1004,7 @@ inline void RenderMeshProps(MeshInfo& mesh, const SceneData& data)
         {
             mesh.layerMask = static_cast<uint32_t>(lm);
             EmitCmd(CMD_SET_LAYER_MASK, uid);
-            s_cmdWriter.writeU32(mesh.layerMask);
+            m_cmdWriter.writeU32(mesh.layerMask);
         }
         ImGui::PopItemWidth();
     }
@@ -1588,7 +1030,6 @@ inline void RenderMeshProps(MeshInfo& mesh, const SceneData& data)
             ImGui::Text("BBox Max: (%.2f, %.2f, %.2f)", mesh.bbMax[0], mesh.bbMax[1], mesh.bbMax[2]);
         }
 
-        // Material reference
         if (mesh.materialUniqueId >= 0)
         {
             for (const auto& mat : data.materials)
@@ -1601,7 +1042,6 @@ inline void RenderMeshProps(MeshInfo& mesh, const SceneData& data)
                     snprintf(matBtn, sizeof(matBtn), "%s###matlink_%u", mat.name.c_str(), uid);
                     if (ImGui::SmallButton(matBtn))
                     {
-                        // Find material index
                         for (size_t mi = 0; mi < data.materials.size(); mi++)
                         {
                             if (data.materials[mi].uniqueId == mat.uniqueId)
@@ -1634,15 +1074,15 @@ inline void RenderMeshProps(MeshInfo& mesh, const SceneData& data)
             if (ImGui::SliderFloat(mtid, &mt.influence, 0, 1, "%.3f"))
             {
                 EmitCmd(CMD_SET_MORPH_INFLUENCE, uid);
-                s_cmdWriter.writeU8(static_cast<uint8_t>(i));
-                s_cmdWriter.writeF32(mt.influence);
+                m_cmdWriter.writeU8(static_cast<uint8_t>(i));
+                m_cmdWriter.writeF32(mt.influence);
             }
             ImGui::PopItemWidth();
         }
     }
 }
 
-inline void RenderLightProps(LightInfo& light)
+void Inspector::RenderLightProps(LightInfo& light)
 {
     uint32_t uid = light.uniqueId;
 
@@ -1709,7 +1149,7 @@ inline void RenderLightProps(LightInfo& light)
     }
 }
 
-inline void RenderMaterialProps(MaterialInfo& mat)
+void Inspector::RenderMaterialProps(MaterialInfo& mat)
 {
     uint32_t uid = mat.uniqueId;
 
@@ -1730,7 +1170,7 @@ inline void RenderMaterialProps(MaterialInfo& mat)
         ImGui::Text("Transparency");
         ImGui::SameLine(100);
         ImGui::PushItemWidth(-1);
-        int tm = mat.transparencyMode + 1; // shift -1..3 to 0..4
+        int tm = mat.transparencyMode + 1;
         const char* tmModes[] = {"Engine Default", "Opaque", "Alpha Test", "Alpha Blend", "Alpha Test+Blend"};
         char tmid[32]; snprintf(tmid, sizeof(tmid), "###tm_%u", uid);
         if (ImGui::Combo(tmid, &tm, tmModes, 5))
@@ -1776,7 +1216,7 @@ inline void RenderMaterialProps(MaterialInfo& mat)
     }
 }
 
-inline void RenderTextureProps(TextureInfo& tex)
+void Inspector::RenderTextureProps(TextureInfo& tex)
 {
     uint32_t uid = tex.uniqueId;
 
@@ -1813,7 +1253,7 @@ inline void RenderTextureProps(TextureInfo& tex)
     }
 }
 
-inline void RenderAnimGroupProps(AnimGroupInfo& ag)
+void Inspector::RenderAnimGroupProps(AnimGroupInfo& ag)
 {
     uint32_t idx = ag.index;
 
@@ -1836,7 +1276,6 @@ inline void RenderAnimGroupProps(AnimGroupInfo& ag)
 
         EditBool("Loop", &ag.loopAnimation, idx, CMD_SET_ANIM_LOOP);
 
-        // Frame scrub
         ImGui::Text("Frame");
         ImGui::SameLine(100);
         ImGui::PushItemWidth(-1);
@@ -1849,7 +1288,7 @@ inline void RenderAnimGroupProps(AnimGroupInfo& ag)
     }
 }
 
-inline void RenderSkeletonProps(SkeletonInfo& sk)
+void Inspector::RenderSkeletonProps(SkeletonInfo& sk)
 {
     uint32_t idx = sk.index;
 
@@ -1866,9 +1305,9 @@ inline void RenderSkeletonProps(SkeletonInfo& sk)
     }
 }
 
-inline void RenderPropertiesPanel(SceneData& data)
+void Inspector::RenderPropertiesPanel(SceneData& data)
 {
-    auto& sel = s_state.selected;
+    auto& sel = m_selected;
 
     if (sel.type == EntityType::None)
     {
@@ -1887,7 +1326,6 @@ inline void RenderPropertiesPanel(SceneData& data)
         auto& cam = data.cameras[sel.index];
         if (cam.uniqueId == sel.uniqueId) { RenderCameraProps(cam); return; }
     }
-    // Search by uid if index is stale
     if (sel.type == EntityType::Camera)
     {
         for (size_t i = 0; i < data.cameras.size(); i++)
@@ -1941,20 +1379,18 @@ inline void RenderPropertiesPanel(SceneData& data)
 }
 
 // ===========================================================================
-// Stats panel
+// Inspector — Stats panel
 // ===========================================================================
-inline void RenderStatsPanel(const SceneData& data)
+void Inspector::RenderStatsPanel(const SceneData& data)
 {
     const auto& st = data.stats;
 
-    // FPS graph
-    auto& state = s_state;
-    state.fpsHistory[state.fpsHistoryIdx] = st.fps;
-    state.fpsHistoryIdx = (state.fpsHistoryIdx + 1) % 120;
+    m_fpsHistory[m_fpsHistoryIdx] = st.fps;
+    m_fpsHistoryIdx = (m_fpsHistoryIdx + 1) % 120;
 
     char fpsLabel[64];
     snprintf(fpsLabel, sizeof(fpsLabel), "%.1f FPS", st.fps);
-    ImGui::PlotLines("###fps_graph", state.fpsHistory, 120, state.fpsHistoryIdx,
+    ImGui::PlotLines("###fps_graph", m_fpsHistory, 120, m_fpsHistoryIdx,
                      fpsLabel, 0, 120, ImVec2(-1, 60));
     ImGui::Separator();
 
@@ -2000,19 +1436,17 @@ inline void RenderStatsPanel(const SceneData& data)
 }
 
 // ===========================================================================
-// Debug panel
+// Inspector — Debug panel
 // ===========================================================================
-inline void RenderDebugPanel()
+void Inspector::RenderDebugPanel()
 {
-    auto& state = s_state;
-
     if (ImGui::CollapsingHeader("Helpers###dbg_helpers", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        if (ImGui::Checkbox("Grid###dbg_grid", &state.debugGrid))
+        if (ImGui::Checkbox("Grid###dbg_grid", &m_debugGrid))
             EmitCmd(CMD_DEBUG_TOGGLE_GRID, 0);
-        if (ImGui::Checkbox("Bounding Boxes###dbg_bbox", &state.debugBBox))
+        if (ImGui::Checkbox("Bounding Boxes###dbg_bbox", &m_debugBBox))
             EmitCmd(CMD_DEBUG_TOGGLE_BBOX, 0);
-        if (ImGui::Checkbox("World Axes###dbg_axes", &state.debugAxes))
+        if (ImGui::Checkbox("World Axes###dbg_axes", &m_debugAxes))
             EmitCmd(CMD_DEBUG_TOGGLE_AXES, 0);
     }
 
@@ -2025,11 +1459,11 @@ inline void RenderDebugPanel()
         for (int i = 0; i < 9; i++)
         {
             char cid[32]; snprintf(cid, sizeof(cid), "###tc_%d", i);
-            if (ImGui::Checkbox(cid, &state.texChannels[i]))
+            if (ImGui::Checkbox(cid, &m_texChannels[i]))
             {
                 EmitCmd(CMD_DEBUG_SET_TEX_CHANNEL, 0);
-                s_cmdWriter.writeU8(static_cast<uint8_t>(i));
-                s_cmdWriter.writeU8(state.texChannels[i] ? 1 : 0);
+                m_cmdWriter.writeU8(static_cast<uint8_t>(i));
+                m_cmdWriter.writeU8(m_texChannels[i] ? 1 : 0);
             }
             ImGui::SameLine();
             ImGui::Text("%s", channelNames[i]);
@@ -2038,27 +1472,27 @@ inline void RenderDebugPanel()
 
     if (ImGui::CollapsingHeader("Features###dbg_feat", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        if (ImGui::Checkbox("Animations###dbg_anim", &state.debugAnimations))
+        if (ImGui::Checkbox("Animations###dbg_anim", &m_debugAnimations))
             EmitCmd(CMD_DEBUG_TOGGLE_ANIMATIONS, 0);
-        if (ImGui::Checkbox("Particles###dbg_part", &state.debugParticles))
+        if (ImGui::Checkbox("Particles###dbg_part", &m_debugParticles))
             EmitCmd(CMD_DEBUG_TOGGLE_PARTICLES, 0);
-        if (ImGui::Checkbox("Fog###dbg_fog", &state.debugFog))
+        if (ImGui::Checkbox("Fog###dbg_fog", &m_debugFog))
             EmitCmd(CMD_DEBUG_TOGGLE_FOG, 0);
-        if (ImGui::Checkbox("Shadows###dbg_shad", &state.debugShadows))
+        if (ImGui::Checkbox("Shadows###dbg_shad", &m_debugShadows))
             EmitCmd(CMD_DEBUG_TOGGLE_SHADOWS, 0);
-        if (ImGui::Checkbox("Lights###dbg_lights", &state.debugLights))
+        if (ImGui::Checkbox("Lights###dbg_lights", &m_debugLights))
             EmitCmd(CMD_DEBUG_TOGGLE_LIGHTS, 0);
-        if (ImGui::Checkbox("Post-Processes###dbg_pp", &state.debugPostProc))
+        if (ImGui::Checkbox("Post-Processes###dbg_pp", &m_debugPostProc))
             EmitCmd(CMD_DEBUG_TOGGLE_POSTPROC, 0);
-        if (ImGui::Checkbox("Skeletons###dbg_skel", &state.debugSkeletons))
+        if (ImGui::Checkbox("Skeletons###dbg_skel", &m_debugSkeletons))
             EmitCmd(CMD_DEBUG_TOGGLE_SKELETONS, 0);
     }
 }
 
 // ===========================================================================
-// Main render function — fixed right-side panel with tabs
+// Inspector — Main render (right-side panel with tabs)
 // ===========================================================================
-inline void RenderInspector(SceneData& data)
+void Inspector::RenderInspector(SceneData& data)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -2080,30 +1514,29 @@ inline void RenderInspector(SceneData& data)
         return;
     }
 
-    // Tab bar
     if (ImGui::BeginTabBar("###inspector_tabs"))
     {
         if (ImGui::BeginTabItem("Explorer"))
         {
-            s_state.activeTab = 0;
+            m_activeTab = 0;
             RenderSceneExplorer(data);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Properties"))
         {
-            s_state.activeTab = 1;
+            m_activeTab = 1;
             RenderPropertiesPanel(data);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Stats"))
         {
-            s_state.activeTab = 2;
+            m_activeTab = 2;
             RenderStatsPanel(data);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Debug"))
         {
-            s_state.activeTab = 3;
+            m_activeTab = 3;
             RenderDebugPanel();
             ImGui::EndTabItem();
         }
