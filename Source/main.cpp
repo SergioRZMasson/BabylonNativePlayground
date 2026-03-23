@@ -70,7 +70,8 @@ static PlaygroundPanel s_playgroundPanel;
 // ---------------------------------------------------------------------------
 static void NativeSetPlaygroundCode(const Napi::CallbackInfo& info)
 {
-    if (info.Length() < 1 || !info[0].IsString()) return;
+    if (info.Length() < 1 || !info[0].IsString())
+        return;
     std::string code = info[0].As<Napi::String>().Utf8Value();
 
     std::lock_guard<std::mutex> lock(s_codeSyncMutex);
@@ -83,7 +84,8 @@ static void NativeSetPlaygroundCode(const Napi::CallbackInfo& info)
 // ---------------------------------------------------------------------------
 static void NativeSetSceneData(const Napi::CallbackInfo& info)
 {
-    if (info.Length() < 1 || !info[0].IsArrayBuffer()) return;
+    if (info.Length() < 1 || !info[0].IsArrayBuffer())
+        return;
     auto buffer = info[0].As<Napi::ArrayBuffer>();
     auto* data = static_cast<const uint8_t*>(buffer.Data());
     auto size = buffer.ByteLength();
@@ -122,9 +124,9 @@ static void* GetNativeWindowHandle(SDL_Window* window)
 // ---------------------------------------------------------------------------
 static void LoadPlayground(const std::string& hash)
 {
-    if (!runtime) return;
-    runtime->Dispatch([hash](Napi::Env env)
-    {
+    if (!runtime)
+        return;
+    runtime->Dispatch([hash](Napi::Env env) {
         auto fn = env.Global().Get("LoadPlayground");
         if (fn.IsFunction())
         {
@@ -138,9 +140,9 @@ static void LoadPlayground(const std::string& hash)
 // ---------------------------------------------------------------------------
 static void RunPlaygroundCode(const std::string& code)
 {
-    if (!runtime) return;
-    runtime->Dispatch([code](Napi::Env env)
-    {
+    if (!runtime)
+        return;
+    runtime->Dispatch([code](Napi::Env env) {
         auto fn = env.Global().Get("RunPlaygroundCode");
         if (fn.IsFunction())
         {
@@ -154,17 +156,18 @@ static void RunPlaygroundCode(const std::string& code)
 // ---------------------------------------------------------------------------
 static void DispatchInspectorCommands()
 {
-    if (!runtime) return;
+    if (!runtime)
+        return;
 
     std::vector<uint8_t> cmdBuf;
     {
         std::lock_guard<std::mutex> lock(s_cmdMutex);
-        if (s_pendingCmdBuffer.empty()) return;
+        if (s_pendingCmdBuffer.empty())
+            return;
         cmdBuf.swap(s_pendingCmdBuffer);
     }
 
-    runtime->Dispatch([buf = std::move(cmdBuf)](Napi::Env env)
-    {
+    runtime->Dispatch([buf = std::move(cmdBuf)](Napi::Env env) {
         auto fn = env.Global().Get("ApplyInspectorCommands");
         if (fn.IsFunction())
         {
@@ -180,7 +183,8 @@ static void DispatchInspectorCommands()
 // ---------------------------------------------------------------------------
 static void LoadDroppedFile(const std::string& filePath)
 {
-    if (!runtime) return;
+    if (!runtime)
+        return;
 
     std::string ext;
     auto dotPos = filePath.rfind('.');
@@ -228,8 +232,7 @@ static void LoadDroppedFile(const std::string& filePath)
     std::cout << "Loading dropped file: " << fileName
               << " (" << fileData.size() << " bytes)" << std::endl;
 
-    runtime->Dispatch([data = std::move(fileData), loaderFunc, fileName](Napi::Env env)
-    {
+    runtime->Dispatch([data = std::move(fileData), loaderFunc, fileName](Napi::Env env) {
         auto fn = env.Global().Get(loaderFunc);
         if (!fn.IsFunction())
         {
@@ -240,10 +243,8 @@ static void LoadDroppedFile(const std::string& filePath)
         auto ab = Napi::ArrayBuffer::New(env, data.size());
         std::memcpy(ab.Data(), data.data(), data.size());
 
-        fn.As<Napi::Function>().Call({
-            ab,
-            Napi::String::New(env, fileName)
-        });
+        fn.As<Napi::Function>().Call({ab,
+            Napi::String::New(env, fileName)});
     });
 }
 
@@ -254,7 +255,8 @@ static void SDLCALL FileDialogCallback(void* userdata, const char* const* fileli
 {
     (void)userdata;
     (void)filter;
-    if (!filelist || !filelist[0]) return;
+    if (!filelist || !filelist[0])
+        return;
     LoadDroppedFile(std::string(filelist[0]));
 }
 
@@ -297,7 +299,7 @@ static void Initialize(SDL_Window* window)
 
     Babylon::Graphics::Configuration graphicsConfig{};
     graphicsConfig.Window = reinterpret_cast<Babylon::Graphics::WindowT>(GetNativeWindowHandle(window));
-    graphicsConfig.Width  = static_cast<size_t>(width);
+    graphicsConfig.Width = static_cast<size_t>(width);
     graphicsConfig.Height = static_cast<size_t>(height);
     graphicsConfig.MSAASamples = 4;
 
@@ -308,8 +310,7 @@ static void Initialize(SDL_Window* window)
 
     runtime = std::make_unique<Babylon::AppRuntime>();
 
-    runtime->Dispatch([](Napi::Env env)
-    {
+    runtime->Dispatch([](Napi::Env env) {
         device->AddToJavaScript(env);
 
         Babylon::Polyfills::Console::Initialize(env, [](const char* message, auto) {
@@ -353,10 +354,14 @@ static int MapMouseButton(Uint8 button)
 {
     switch (button)
     {
-    case SDL_BUTTON_LEFT:   return Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID;
-    case SDL_BUTTON_RIGHT:  return Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID;
-    case SDL_BUTTON_MIDDLE: return Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID;
-    default:                return -1;
+        case SDL_BUTTON_LEFT:
+            return Babylon::Plugins::NativeInput::LEFT_MOUSE_BUTTON_ID;
+        case SDL_BUTTON_RIGHT:
+            return Babylon::Plugins::NativeInput::RIGHT_MOUSE_BUTTON_ID;
+        case SDL_BUTTON_MIDDLE:
+            return Babylon::Plugins::NativeInput::MIDDLE_MOUSE_BUTTON_ID;
+        default:
+            return -1;
     }
 }
 
@@ -410,14 +415,12 @@ int main(int argc, char* argv[])
     };
     playgroundCallbacks.openGLBFile = [window]() {
         static const SDL_DialogFileFilter glbFilter[] = {
-            { "glTF Binary", "glb;gltf" }
-        };
+            {"glTF Binary", "glb;gltf"}};
         SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, glbFilter, 1, nullptr, false);
     };
     playgroundCallbacks.openENVFile = [window]() {
         static const SDL_DialogFileFilter envFilter[] = {
-            { "Environment Map", "env" }
-        };
+            {"Environment Map", "env"}};
         SDL_ShowOpenFileDialog(FileDialogCallback, nullptr, window, envFilter, 1, nullptr, false);
     };
 
@@ -431,65 +434,65 @@ int main(int argc, char* argv[])
 
             switch (event.type)
             {
-            case SDL_EVENT_QUIT:
-                running = false;
-                break;
+                case SDL_EVENT_QUIT:
+                    running = false;
+                    break;
 
-            case SDL_EVENT_WINDOW_RESIZED:
-                if (device)
-                    device->UpdateSize(event.window.data1, event.window.data2);
-                break;
+                case SDL_EVENT_WINDOW_RESIZED:
+                    if (device)
+                        device->UpdateSize(event.window.data1, event.window.data2);
+                    break;
 
-            case SDL_EVENT_KEY_DOWN:
-                if (event.key.key == SDLK_F1)
-                    s_showImgui = !s_showImgui;
-                if (event.key.key == SDLK_R && (event.key.mod & SDL_KMOD_CTRL))
-                    Initialize(window);
-                break;
+                case SDL_EVENT_KEY_DOWN:
+                    if (event.key.key == SDLK_F1)
+                        s_showImgui = !s_showImgui;
+                    if (event.key.key == SDLK_R && (event.key.mod & SDL_KMOD_CTRL))
+                        Initialize(window);
+                    break;
 
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if (!io.WantCaptureMouse && nativeInput)
-                {
-                    int id = MapMouseButton(event.button.button);
-                    if (id >= 0)
-                        nativeInput->MouseDown(id,
-                            static_cast<int32_t>(event.button.x),
-                            static_cast<int32_t>(event.button.y));
-                }
-                break;
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    if (!io.WantCaptureMouse && nativeInput)
+                    {
+                        int id = MapMouseButton(event.button.button);
+                        if (id >= 0)
+                            nativeInput->MouseDown(id,
+                                static_cast<int32_t>(event.button.x),
+                                static_cast<int32_t>(event.button.y));
+                    }
+                    break;
 
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-                if (!io.WantCaptureMouse && nativeInput)
-                {
-                    int id = MapMouseButton(event.button.button);
-                    if (id >= 0)
-                        nativeInput->MouseUp(id,
-                            static_cast<int32_t>(event.button.x),
-                            static_cast<int32_t>(event.button.y));
-                }
-                break;
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                    if (!io.WantCaptureMouse && nativeInput)
+                    {
+                        int id = MapMouseButton(event.button.button);
+                        if (id >= 0)
+                            nativeInput->MouseUp(id,
+                                static_cast<int32_t>(event.button.x),
+                                static_cast<int32_t>(event.button.y));
+                    }
+                    break;
 
-            case SDL_EVENT_MOUSE_MOTION:
-                if (!io.WantCaptureMouse && nativeInput)
-                    nativeInput->MouseMove(
-                        static_cast<int32_t>(event.motion.x),
-                        static_cast<int32_t>(event.motion.y));
-                break;
+                case SDL_EVENT_MOUSE_MOTION:
+                    if (!io.WantCaptureMouse && nativeInput)
+                        nativeInput->MouseMove(
+                            static_cast<int32_t>(event.motion.x),
+                            static_cast<int32_t>(event.motion.y));
+                    break;
 
-            case SDL_EVENT_MOUSE_WHEEL:
-                if (!io.WantCaptureMouse && nativeInput)
-                    nativeInput->MouseWheel(
-                        Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID,
-                        static_cast<int>(-event.wheel.y * 100.0f));
-                break;
+                case SDL_EVENT_MOUSE_WHEEL:
+                    if (!io.WantCaptureMouse && nativeInput)
+                        nativeInput->MouseWheel(
+                            Babylon::Plugins::NativeInput::MOUSEWHEEL_Y_ID,
+                            static_cast<int>(-event.wheel.y * 100.0f));
+                    break;
 
-            case SDL_EVENT_DROP_FILE:
-                if (event.drop.data)
-                {
-                    std::string droppedFile(event.drop.data);
-                    LoadDroppedFile(droppedFile);
-                }
-                break;
+                case SDL_EVENT_DROP_FILE:
+                    if (event.drop.data)
+                    {
+                        std::string droppedFile(event.drop.data);
+                        LoadDroppedFile(droppedFile);
+                    }
+                    break;
             }
         }
 

@@ -38,12 +38,13 @@ void PlaygroundPanel::SyncCode(const std::string& code)
 void PlaygroundPanel::Render(const ImGuiIO& io, const PlaygroundCallbacks& callbacks)
 {
     float leftPanelWidth = io.DisplaySize.x * 0.2f;
-    if (leftPanelWidth < 280) leftPanelWidth = 280;
+    if (leftPanelWidth < 280)
+        leftPanelWidth = 280;
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(leftPanelWidth, io.DisplaySize.y));
     ImGui::Begin("Babylon Native Playground", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse);
+            ImGuiWindowFlags_NoCollapse);
 
     // Load Assets section
     if (ImGui::CollapsingHeader("Load Assets", ImGuiTreeNodeFlags_DefaultOpen))
@@ -90,7 +91,8 @@ void PlaygroundPanel::Render(const ImGuiIO& io, const PlaygroundCallbacks& callb
     ImGui::Text("Code Editor:");
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float editorHeight = avail.y - 80.0f;
-    if (editorHeight < 100.0f) editorHeight = 100.0f;
+    if (editorHeight < 100.0f)
+        editorHeight = 100.0f;
     ImGui::InputTextMultiline("##code", m_codeBuf, CODE_BUF_SIZE,
         ImVec2(-1.0f, editorHeight),
         ImGuiInputTextFlags_AllowTabInput);
