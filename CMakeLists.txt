@@ -51,6 +51,7 @@ target_link_libraries(BabylonNativePlayground
     PRIVATE Window
     PRIVATE ScriptLoader
     PRIVATE XMLHttpRequest
+    PRIVATE WebSocket
     PRIVATE Canvas
     PRIVATE SDL3::SDL3
     PRIVATE imgui
@@ -82,6 +83,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/babylonjs/babylon.max.js")
 
     set(APP_SCRIPTS
         "Scripts/playground.js"
+        "Scripts/agent_bridge.js"
         "Scripts/Loaders/loader_glb.js"
         "Scripts/Loaders/loader_obj.js"
         "Scripts/Loaders/loader_env.js"

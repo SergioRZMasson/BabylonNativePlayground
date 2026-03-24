@@ -17,6 +17,7 @@
 #include <Babylon/Polyfills/Window.h>
 #include <Babylon/Polyfills/XMLHttpRequest.h>
 #include <Babylon/Polyfills/Canvas.h>
+#include <Babylon/Polyfills/WebSocket.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -387,6 +388,8 @@ static void Initialize(SDL_Window* window)
 
         Babylon::Polyfills::Window::Initialize(env);
         Babylon::Polyfills::XMLHttpRequest::Initialize(env);
+        Babylon::Polyfills::WebSocket::Initialize(env);
+        
         nativeCanvas = std::make_unique<Babylon::Polyfills::Canvas>(
             Babylon::Polyfills::Canvas::Initialize(env));
         Babylon::Plugins::NativeEngine::Initialize(env);
@@ -412,6 +415,7 @@ static void Initialize(SDL_Window* window)
     loader.LoadScript("app:///Scripts/Loaders/loader_obj.js");
     loader.LoadScript("app:///Scripts/Loaders/loader_env.js");
     loader.LoadScript("app:///Scripts/Loaders/load_sbsar.js");
+    loader.LoadScript("app:///Scripts/agent_bridge.js");
 
     ImGui_ImplBabylon_Init(width, height);
 }
