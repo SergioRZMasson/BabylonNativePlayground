@@ -133,6 +133,14 @@ function _agentHandleCommand(request) {
                 _agentCmdLoadGLBData(id, params);
                 // Response sent asynchronously after load completes
                 break;
+            case "load_sbsar":
+                _agentCmdLoadSbsar(id, params);
+                // Response sent asynchronously via C++ callback
+                break;
+            case "apply_substance":
+                _agentCmdApplySubstance(id, params);
+                // Response sent asynchronously via C++ callback
+                break;
             case "ping":
                 _agentSend({ id: id, success: true, data: "pong" });
                 break;
@@ -540,6 +548,62 @@ function _agentCmdCreatePrimitive(params) {
         type: type,
         position: _agentVec3(mesh.position)
     };
+}
+
+// ---------------------------------------------------------------------------
+// Substance SDK integration (requires HAS_SUBSTANCE_SDK in C++ build)
+// ---------------------------------------------------------------------------
+var _substancePendingCallbacks = {};
+
+// load_sbsar: { path: "E:\\path\\to\\file.sbsar" }
+function _agentCmdLoadSbsar(requestId, params) {
+    var path = params.path;
+    if (!path) throw new Error("No path provided");
+
+    if (typeof _nativeLoadSbsar !== "function") {
+        throw new Error("Substance SDK not available (build without HAS_SUBSTANCE_SDK)");
+    }
+
+    _substancePendingCallbacks["load_" + requestId] = requestId;
+    _nativeLoadSbsar(path, requestId);
+}
+
+// apply_substance: { target: "materialName" or "#uid" }
+function _agentCmdApplySubstance(requestId, params) {
+    var target = params.target;
+    if (!target) throw new Error("No material target provided");
+
+    if (typeof _nativeApplySubstance !== "function") {
+        throw new Error("Substance SDK not available (build without HAS_SUBSTANCE_SDK)");
+    }
+
+    var mat = _agentFindMaterial(target);
+    if (!mat) throw new Error("Material not found: " + target);
+
+    _substancePendingCallbacks["apply_" + requestId] = requestId;
+    _nativeApplySubstance(mat.uniqueId, requestId);
+}
+
+// Called from C++ when sbsar load completes
+function _onSubstanceLoadComplete(requestId, success) {
+    var agentReqId = _substancePendingCallbacks["load_" + requestId];
+    if (agentReqId) {
+        delete _substancePendingCallbacks["load_" + requestId];
+        if (success) {
+            _agentSend({ id: agentReqId, success: true, data: { loaded: true } });
+        } else {
+            _agentSend({ id: agentReqId, success: false, error: "Failed to load sbsar file" });
+        }
+    }
+}
+
+// Called from C++ when substance apply completes
+function _onSubstanceApplyComplete(requestId) {
+    var agentReqId = _substancePendingCallbacks["apply_" + requestId];
+    if (agentReqId) {
+        delete _substancePendingCallbacks["apply_" + requestId];
+        _agentSend({ id: agentReqId, success: true, data: { applied: true } });
+    }
 }
 
 // ---------------------------------------------------------------------------

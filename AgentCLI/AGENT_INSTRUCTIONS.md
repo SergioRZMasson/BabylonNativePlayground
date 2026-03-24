@@ -128,6 +128,30 @@ Create basic 3D shapes in the scene. All parameters after the name are optional.
 | `cylinder [name] [height] [diameter]` | Create cylinder | `cylinder col 3 0.5` |
 | `torus [name] [diameter] [thickness]` | Create torus | `torus ring 2 0.4` |
 
+### Substance Materials (requires `HAS_SUBSTANCE_SDK` build)
+
+Load `.sbsar` Substance archives and apply procedural textures to PBR materials.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `loadsbsar <path>` | Load a Substance .sbsar file | `loadsbsar E:\Materials\Wood.sbsar` |
+| `applysubstance <material>` | Apply loaded substance to a PBR material | `applysubstance myPBRMaterial` |
+
+**How it works:**
+1. `loadsbsar` sends the file path to C++ via a native callback
+2. C++ main loop picks it up, loads the sbsar via the Substance SDK, renders initial textures,
+   and creates ExternalTexture objects for each output channel (BaseColor, Normal, Roughness, etc.)
+3. `applysubstance` sends the material uniqueId to C++
+4. C++ calls `ApplyToMaterial`, which dispatches ExternalTexture promises back to JavaScript
+5. JS wraps them as Babylon.js textures and assigns them to the correct PBR material slots
+
+**Notes:**
+- The target material **must be a PBRMaterial** — StandardMaterial is not supported for substance.
+- The most recently loaded sbsar is the one that gets applied.
+- Substance outputs are auto-mapped: BaseColor→albedoTexture, Normal→bumpTexture,
+  Roughness→microSurfaceTexture, Metallic→reflectivityTexture, etc.
+- If the build does not include `HAS_SUBSTANCE_SDK`, these commands will return an error.
+
 ### Advanced
 
 | Command | Description | Example |
@@ -185,6 +209,8 @@ The CLI communicates with Babylon Native via JSON over WebSocket.
 | `load_glb` | `{ "path": "relative/path.glb" }` | `{ "loaded": "filename" }` |
 | `load_glb_data` | `{ "data": "<base64>", "fileName": "model.glb" }` | `{ "loaded": "filename" }` |
 | `create_primitive` | `{ "type": "sphere"\|"box"\|"plane"\|"ground"\|"cylinder"\|"torus", "name": "...", "options": {...}, "position": [x,y,z], "color": [r,g,b] }` | `{ "name", "uniqueId", "type", "position" }` |
+| `load_sbsar` | `{ "path": "E:\\Materials\\Wood.sbsar" }` | `{ "loaded": true }` |
+| `apply_substance` | `{ "target": "materialName" }` | `{ "applied": true }` |
 | `eval` | `{ "code": "javascript code" }` | Eval result |
 | `load_playground` | `{ "hash": "#ABCDEF" }` | `{}` |
 | `run_code` | `{ "code": "function createScene(engine){...}" }` | `{}` |

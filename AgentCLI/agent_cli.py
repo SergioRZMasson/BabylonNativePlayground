@@ -184,6 +184,10 @@ class BabylonAgentCLI:
             "ground": self._cmd_create_ground,
             "cylinder": self._cmd_create_cylinder,
             "torus": self._cmd_create_torus,
+            "loadsbsar": self._cmd_load_sbsar,
+            "load_sbsar": self._cmd_load_sbsar,
+            "applysubstance": self._cmd_apply_substance,
+            "apply_substance": self._cmd_apply_substance,
             "ping": self._cmd_ping,
             "status": self._cmd_status,
         }
@@ -266,6 +270,10 @@ class BabylonAgentCLI:
         ║ LOAD ASSETS                                                     ║
         ║   loadglb <path>                      Append GLB into scene    ║
         ║     Path is relative to the executable (app:/// prefix)         ║
+        ║                                                                 ║
+        ║ SUBSTANCE (requires HAS_SUBSTANCE_SDK build)                    ║
+        ║   loadsbsar <path>                    Load .sbsar material     ║
+        ║   applysubstance <material>           Apply substance to mat   ║
         ║                                                                 ║
         ║ ADVANCED                                                        ║
         ║   eval <js code>                      Execute JS on scene      ║
@@ -706,6 +714,42 @@ class BabylonAgentCLI:
 
     async def _cmd_create_torus(self, args: str):
         await self._create_primitive("torus", args, {"diameter": 1, "thickness": 0.3})
+
+    # -- Substance commands --
+
+    async def _cmd_load_sbsar(self, args: str):
+        if not args:
+            print("Usage: loadsbsar <path>")
+            print("  Example: loadsbsar E:\\Materials\\Wood.sbsar")
+            return
+        path = args.strip().strip('"').strip("'")
+        abs_path = os.path.abspath(path)
+        if not os.path.isfile(abs_path):
+            print(f"Error: File not found: {abs_path}")
+            return
+        print(f"Loading sbsar: {abs_path} ...")
+        resp = await self.send_command("load_sbsar", {"path": abs_path}, timeout=60.0)
+        data = self._check_response(resp)
+        if data:
+            print(f"✅ Substance material loaded: {os.path.basename(abs_path)}")
+        elif resp and resp.get("success"):
+            print(f"✅ Substance material loaded: {os.path.basename(abs_path)}")
+
+    async def _cmd_apply_substance(self, args: str):
+        if not args:
+            print("Usage: applysubstance <material_name>")
+            print("  Applies the most recently loaded substance to the named material.")
+            print("  The target material must be a PBRMaterial.")
+            print("  Example: applysubstance myPBRMaterial")
+            return
+        target = args.strip().strip('"').strip("'")
+        print(f"Applying substance to material: {target} ...")
+        resp = await self.send_command("apply_substance", {"target": target}, timeout=30.0)
+        data = self._check_response(resp)
+        if data:
+            print(f"✅ Substance textures applied to '{target}'")
+        elif resp and resp.get("success"):
+            print(f"✅ Substance textures applied to '{target}'")
 
     # ------------------------------------------------------------------
     # Main entry point

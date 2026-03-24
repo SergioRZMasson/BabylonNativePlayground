@@ -139,6 +139,55 @@ static void ApplySubstanceTexturesToMaterial(uint32_t materialUid,
         });
     });
 }
+
+// ---------------------------------------------------------------------------
+// Native callback: load an .sbsar file from JS agent bridge
+// ---------------------------------------------------------------------------
+static void NativeLoadSbsar(const Napi::CallbackInfo& info)
+{
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsString())
+        return;
+
+    std::string path = info[0].As<Napi::String>().Utf8Value();
+    std::string requestId = info[1].As<Napi::String>().Utf8Value();
+
+    bool ok = s_substanceImporter.LoadSbsarFile(path);
+
+    runtime->Dispatch([requestId, ok](Napi::Env env) {
+        auto fn = env.Global().Get("_onSubstanceLoadComplete");
+        if (fn.IsFunction())
+        {
+            fn.As<Napi::Function>().Call({
+                Napi::String::New(env, requestId),
+                Napi::Boolean::New(env, ok)
+            });
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Native callback: apply substance textures to a material from JS agent bridge
+// ---------------------------------------------------------------------------
+static void NativeApplySubstance(const Napi::CallbackInfo& info)
+{
+    if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString())
+        return;
+
+    uint32_t materialUid = info[0].As<Napi::Number>().Uint32Value();
+    std::string requestId = info[1].As<Napi::String>().Utf8Value();
+
+    s_substanceImporter.ApplyToMaterial(materialUid);
+
+    runtime->Dispatch([requestId](Napi::Env env) {
+        auto fn = env.Global().Get("_onSubstanceApplyComplete");
+        if (fn.IsFunction())
+        {
+            fn.As<Napi::Function>().Call({
+                Napi::String::New(env, requestId)
+            });
+        }
+    });
+}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -400,6 +449,13 @@ static void Initialize(SDL_Window* window)
             Napi::Function::New(env, NativeSetSceneData));
         env.Global().Set("_nativeSetPlaygroundCode",
             Napi::Function::New(env, NativeSetPlaygroundCode));
+
+#ifdef HAS_SUBSTANCE_SDK
+        env.Global().Set("_nativeLoadSbsar",
+            Napi::Function::New(env, NativeLoadSbsar));
+        env.Global().Set("_nativeApplySubstance",
+            Napi::Function::New(env, NativeApplySubstance));
+#endif
 
         auto context = &Babylon::Graphics::DeviceContext::GetFromJavaScript(env);
         ImGui_ImplBabylon_SetContext(context);
