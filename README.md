@@ -68,16 +68,14 @@ npm install
 
 **Windows (Visual Studio):**
 ```bash
-mkdir build && cd build
-cmake .. -G "Visual Studio 17 2022"
-cmake --build . --config Release
+cmake --preset windows-x64-release
+cmake --build --preset windows-x64-release
 ```
 
 **macOS (Xcode):**
 ```bash
-mkdir build && cd build
-cmake .. -G "Xcode"
-cmake --build . --config Release
+cmake --preset macos-release
+cmake --build --preset macos-release
 ```
 
 **Linux (Ninja):**

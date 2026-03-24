@@ -16,7 +16,9 @@
       },
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NAPI_JAVASCRIPT_ENGINE": "V8",
+        "SUBSTANCE_SDK_PATH": "$env{SUBSTANCE_SDK_PATH}"
       },
       "condition": {
         "type": "equals",
@@ -34,7 +36,9 @@
       },
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "NAPI_JAVASCRIPT_ENGINE": "V8",
+        "SUBSTANCE_SDK_PATH": "$env{SUBSTANCE_SDK_PATH}"
       },
       "condition": {
         "type": "equals",

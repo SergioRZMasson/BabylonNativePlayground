@@ -121,17 +121,18 @@ set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT BabylonNa
 
 # Copy Substance SDK runtime DLLs to build output
 if(SUBSTANCE_SDK_PATH AND WIN32)
+    set(SUBSTANCE_REQUIRED_DLLS substance_d3d11_blend sbsar_manager substance_linker)
     set(SUBSTANCE_DLL_CONFIGS debug release)
     foreach(DLL_CONFIG ${SUBSTANCE_DLL_CONFIGS})
-        string(TOUPPER ${DLL_CONFIG} DLL_CONFIG_UPPER)
-        file(GLOB SUBSTANCE_DLLS "${SUBSTANCE_SDK_PATH}/bin/${DLL_CONFIG}/*.dll")
-        foreach(DLL_FILE ${SUBSTANCE_DLLS})
-            get_filename_component(DLL_NAME "${DLL_FILE}" NAME)
-            add_custom_command(TARGET BabylonNativePlayground POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    "${DLL_FILE}"
-                    "$<TARGET_FILE_DIR:BabylonNativePlayground>/${DLL_NAME}"
-                COMMENT "Copying Substance DLL: ${DLL_NAME}")
+        foreach(DLL_BASE ${SUBSTANCE_REQUIRED_DLLS})
+            set(DLL_FILE "${SUBSTANCE_SDK_PATH}/bin/${DLL_CONFIG}/${DLL_BASE}.dll")
+            if(EXISTS "${DLL_FILE}")
+                add_custom_command(TARGET BabylonNativePlayground POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${DLL_FILE}"
+                        "$<TARGET_FILE_DIR:BabylonNativePlayground>/${DLL_BASE}.dll"
+                    COMMENT "Copying Substance DLL: ${DLL_BASE}.dll")
+            endif()
         endforeach()
     endforeach()
 endif()
@@ -153,3 +154,6 @@ elseif(APPLE)
 else()
     target_compile_definitions(BabylonNativePlayground PRIVATE TARGET_PLATFORM_LINUX)
 endif()
+
+add_custom_command(TARGET BabylonNativePlayground POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:BabylonNativePlayground>>,copy,true> $<TARGET_RUNTIME_DLLS:BabylonNativePlayground> $<TARGET_FILE_DIR:BabylonNativePlayground> COMMAND_EXPAND_LISTS)
