@@ -658,54 +658,96 @@ function _agentCmdEnsureDefaultLights() {
 }
 
 // set_world_matrix: { target, matrix: [16 floats] }
-// Receives a LOCAL transform matrix from the DCC tool.
-// Decomposes into position/rotation/scale and applies to the Babylon node.
+// Receives a LOCAL transform matrix from 3DS Max.
+// Converts coordinate system (Max Z-up right-hand → Babylon Y-up left-hand):
+//   Max Y → Babylon -Z,  Max Z → Babylon Y
+// Scale factor: Max 1.0 = Babylon 0.01 (GLB exporter bakes this, so we must too)
+// Applies to the mesh's PARENT transform node, not the mesh itself.
 function _agentCmdSetWorldMatrix(params) {
     if (!currentScene) throw new Error("No scene loaded");
     var node = _agentFindNode(params.target);
     if (!node) throw new Error("Node not found: " + params.target);
 
+    // Find the parent transform node to apply changes to
+    var targetNode = node.parent ? node.parent : node;
+
     var m = params.matrix;
     if (!m || m.length < 16) throw new Error("matrix must be 16 floats");
 
-    console.log("[SetWorldMatrix] Target: " + params.target);
-    console.log("[SetWorldMatrix] Raw matrix from DCC: [" +
-        m[0].toFixed(3) + ", " + m[1].toFixed(3) + ", " + m[2].toFixed(3) + ", " + m[3].toFixed(3) + ",  " +
-        m[4].toFixed(3) + ", " + m[5].toFixed(3) + ", " + m[6].toFixed(3) + ", " + m[7].toFixed(3) + ",  " +
-        m[8].toFixed(3) + ", " + m[9].toFixed(3) + ", " + m[10].toFixed(3) + ", " + m[11].toFixed(3) + ",  " +
-        m[12].toFixed(3) + ", " + m[13].toFixed(3) + ", " + m[14].toFixed(3) + ", " + m[15].toFixed(3) + "]");
+    console.log("[SetWorldMatrix] Target mesh: " + params.target + " -> applying to: " + targetNode.name);
 
-    // Log current node state before change
-    console.log("[SetWorldMatrix] BEFORE - pos: " + _vecStr(node.position) +
-        " rot: " + (node.rotationQuaternion ? _quatStr(node.rotationQuaternion) : _vecStr(node.rotation)) +
-        " scale: " + _vecStr(node.scaling));
-    console.log("[SetWorldMatrix] Parent: " + (node.parent ? node.parent.name : "none"));
+    // Raw Max local matrix (4x4, row-major from Max IMatrix3):
+    // Row 0 = X axis:   m[0], m[1], m[2], m[3]=0
+    // Row 1 = Y axis:   m[4], m[5], m[6], m[7]=0
+    // Row 2 = Z axis:   m[8], m[9], m[10], m[11]=0
+    // Row 3 = Translate: m[12], m[13], m[14], m[15]=1
 
-    // Create matrix from the raw array
-    var localMatrix = BABYLON.Matrix.FromArray(m);
+    // Extract Max position (row 3)
+    var maxPosX = m[12];
+    var maxPosY = m[13];
+    var maxPosZ = m[14];
 
-    // Decompose into position, rotation (quaternion), scale
-    var newScale = new BABYLON.Vector3();
-    var newRotation = new BABYLON.Quaternion();
-    var newPosition = new BABYLON.Vector3();
+    // Convert position: Max(X,Y,Z) → Babylon(X, Z, -Y), scaled by 0.01
+    var scaleFactor = 0.01;
+    var bPos = new BABYLON.Vector3(
+        maxPosX * scaleFactor,
+        maxPosZ * scaleFactor,
+        -maxPosY * scaleFactor
+    );
 
-    var success = localMatrix.decompose(newScale, newRotation, newPosition);
-    console.log("[SetWorldMatrix] Decompose success: " + success);
-    console.log("[SetWorldMatrix] Decomposed pos: " + _vecStr(newPosition));
-    console.log("[SetWorldMatrix] Decomposed rot (quat): " + _quatStr(newRotation));
-    console.log("[SetWorldMatrix] Decomposed scale: " + _vecStr(newScale));
+    // Build a rotation matrix from the Max 3x3 upper-left, with axis conversion:
+    // Max X-axis (row0) → Babylon X-axis
+    // Max Y-axis (row1) → Babylon -Z-axis
+    // Max Z-axis (row2) → Babylon Y-axis
+    //
+    // Extract axis lengths for scale
+    var maxXLen = Math.sqrt(m[0]*m[0] + m[1]*m[1] + m[2]*m[2]);
+    var maxYLen = Math.sqrt(m[4]*m[4] + m[5]*m[5] + m[6]*m[6]);
+    var maxZLen = Math.sqrt(m[8]*m[8] + m[9]*m[9] + m[10]*m[10]);
 
-    // Apply decomposed values
-    node.position.copyFrom(newPosition);
-    node.scaling.copyFrom(newScale);
-    if (!node.rotationQuaternion) {
-        node.rotationQuaternion = new BABYLON.Quaternion();
+    var bScale = new BABYLON.Vector3(maxXLen, maxZLen, maxYLen);
+
+    // Normalize axes and convert to Babylon coordinate system
+    // Babylon X-axis from Max X-axis: (maxX.x, maxX.z, -maxX.y)
+    var nx = maxXLen > 0.0001 ? 1.0 / maxXLen : 0;
+    var bXx = m[0] * nx, bXy = m[2] * nx, bXz = -m[1] * nx;
+
+    // Babylon Y-axis from Max Z-axis: (maxZ.x, maxZ.z, -maxZ.y)
+    var nz = maxZLen > 0.0001 ? 1.0 / maxZLen : 0;
+    var bYx = m[8] * nz, bYy = m[10] * nz, bYz = -m[9] * nz;
+
+    // Babylon Z-axis from -Max Y-axis: (-maxY.x, -maxY.z, maxY.y)
+    var ny = maxYLen > 0.0001 ? 1.0 / maxYLen : 0;
+    var bZx = -m[4] * ny, bZy = -m[6] * ny, bZz = m[5] * ny;
+
+    // Build rotation matrix (column-major for Babylon)
+    var rotMatrix = BABYLON.Matrix.FromValues(
+        bXx, bXy, bXz, 0,
+        bYx, bYy, bYz, 0,
+        bZx, bZy, bZz, 0,
+        0,   0,   0,   1
+    );
+
+    var bRot = BABYLON.Quaternion.FromRotationMatrix(rotMatrix);
+
+    console.log("[SetWorldMatrix] Max pos: (" + maxPosX.toFixed(3) + ", " + maxPosY.toFixed(3) + ", " + maxPosZ.toFixed(3) + ")");
+    console.log("[SetWorldMatrix] Babylon pos: " + _vecStr(bPos));
+    console.log("[SetWorldMatrix] Babylon rot: " + _quatStr(bRot));
+    console.log("[SetWorldMatrix] Babylon scale: " + _vecStr(bScale));
+    console.log("[SetWorldMatrix] BEFORE " + targetNode.name + " - pos: " + _vecStr(targetNode.position) +
+        " scale: " + _vecStr(targetNode.scaling));
+
+    // Apply to parent transform node
+    targetNode.position.copyFrom(bPos);
+    targetNode.scaling.copyFrom(bScale);
+    if (!targetNode.rotationQuaternion) {
+        targetNode.rotationQuaternion = new BABYLON.Quaternion();
     }
-    node.rotationQuaternion.copyFrom(newRotation);
+    targetNode.rotationQuaternion.copyFrom(bRot);
 
-    console.log("[SetWorldMatrix] AFTER - pos: " + _vecStr(node.position) +
-        " rot: " + _quatStr(node.rotationQuaternion) +
-        " scale: " + _vecStr(node.scaling));
+    console.log("[SetWorldMatrix] AFTER " + targetNode.name + " - pos: " + _vecStr(targetNode.position) +
+        " rot: " + _quatStr(targetNode.rotationQuaternion) +
+        " scale: " + _vecStr(targetNode.scaling));
 }
 
 function _vecStr(v) {
