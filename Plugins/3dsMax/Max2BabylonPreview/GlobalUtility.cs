@@ -6,11 +6,16 @@ namespace Max2BabylonPreview
 {
     public class LivePreviewActionItem : ActionItem
     {
+        private static LivePreviewPanel _panel;
+
         public override bool ExecuteAction()
         {
-            // LivePreviewPanel form will be implemented in Task 3.2
-            Loader.Global.COREInterface.DisplayTempPrompt(
-                "Babylon Live Preview: Panel not yet implemented", 3000);
+            if (_panel == null || _panel.IsDisposed)
+            {
+                _panel = new LivePreviewPanel();
+            }
+            _panel.Show();
+            _panel.BringToFront();
             return true;
         }
 

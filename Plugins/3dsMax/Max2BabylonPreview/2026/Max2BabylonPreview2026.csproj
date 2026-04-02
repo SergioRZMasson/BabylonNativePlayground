@@ -27,11 +27,21 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
+  <!-- Framework References for Windows Forms -->
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
   <!-- Source files from parent directory -->
   <ItemGroup>
     <Compile Include="..\Descriptor.cs" Link="Descriptor.cs" />
     <Compile Include="..\Loader.cs" Link="Loader.cs" />
     <Compile Include="..\GlobalUtility.cs" Link="GlobalUtility.cs" />
+    <Compile Include="..\LivePreviewPanel.cs" Link="LivePreviewPanel.cs" />
+    <Compile Include="..\MaxSceneExporter.cs" Link="MaxSceneExporter.cs" />
+    <Compile Include="..\MaxObjectMapper.cs" Link="MaxObjectMapper.cs" />
+    <Compile Include="..\MaxLivePreviewSession.cs" Link="MaxLivePreviewSession.cs" />
   </ItemGroup>
 
   <!-- LivePreview Shared Projects -->
