@@ -45,16 +45,17 @@ namespace Max2BabylonPreview
             try
             {
                 string script =
-                    "if (menuMan.findMenu \"Babylon Preview\") != undefined do (\r\n" +
-                    "    menuMan.unRegisterMenu (menuMan.findMenu \"Babylon Preview\")\r\n" +
-                    ")\r\n" +
-                    "local mainMenu = menuMan.createMenu \"Babylon Preview\"\r\n" +
-                    "local livePreviewAction = menuMan.createActionItem \"Babylon Live Preview\" \"Babylon Preview\"\r\n" +
-                    "mainMenu.addItem livePreviewAction -1\r\n" +
-                    "local subItem = menuMan.createSubMenuItem \"Babylon Preview\" mainMenu\r\n" +
-                    "local mainBar = menuMan.getMainMenuBar()\r\n" +
-                    "mainBar.addItem subItem -1\r\n" +
-                    "menuMan.updateMenuBar()\r\n";
+                    "(\r\n" +
+                    "    function createBabylonPreviewMenuCB =\r\n" +
+                    "    (\r\n" +
+                    "        local menuMgr = callbacks.notificationParam()\r\n" +
+                    "        local mainMenu = menuMgr.mainMenuBar\r\n" +
+                    "        local babMenu = mainMenu.CreateSubMenu \"e7f1a2b3-c4d5-4e6f-a7b8-c9d0e1f2a3b4\" \"Babylon Preview\"\r\n" +
+                    "        babMenu.CreateAction \"d8e9f0a1-b2c3-4d5e-f6a7-b8c9d0e1f2a3\" 0 \"Babylon Live Preview\"\r\n" +
+                    "    )\r\n" +
+                    "    callbacks.removeScripts id:#BabylonPreviewMenus\r\n" +
+                    "    callbacks.addScript #cuiRegisterMenus createBabylonPreviewMenuCB id:#BabylonPreviewMenus\r\n" +
+                    ")\r\n";
 
                 ManagedServices.MaxscriptSDK.ExecuteMaxscriptCommand(script,
                     ManagedServices.MaxscriptSDK.ScriptSource.NotSpecified);
