@@ -115,6 +115,13 @@ namespace Max2BabylonPreview
                 if (!ArrayEqual(current, cached))
                 {
                     _cachedMatrices[handle] = current;
+                    var name = _map?.GetBabylonName(handle) ?? handle;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[MaxChangeDetector] Matrix changed for '{name}': " +
+                        $"[{current[0]:F3}, {current[1]:F3}, {current[2]:F3}, {current[3]:F3}, " +
+                        $"{current[4]:F3}, {current[5]:F3}, {current[6]:F3}, {current[7]:F3}, " +
+                        $"{current[8]:F3}, {current[9]:F3}, {current[10]:F3}, {current[11]:F3}, " +
+                        $"{current[12]:F3}, {current[13]:F3}, {current[14]:F3}, {current[15]:F3}]");
                     OnWorldMatrixChanged?.Invoke(handle, current);
                 }
             }

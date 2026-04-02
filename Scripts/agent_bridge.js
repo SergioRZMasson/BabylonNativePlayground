@@ -657,33 +657,65 @@ function _agentCmdEnsureDefaultLights() {
     light.intensity = 1.0;
 }
 
-// set_world_matrix: { target, matrix: [16 floats, row-major] }
-// Sets the node's transform from a world-space 4x4 matrix.
-// The matrix must already be in Babylon's Y-up left-hand coordinate system.
+// set_world_matrix: { target, matrix: [16 floats] }
+// Receives a LOCAL transform matrix from the DCC tool.
+// Decomposes into position/rotation/scale and applies to the Babylon node.
 function _agentCmdSetWorldMatrix(params) {
     if (!currentScene) throw new Error("No scene loaded");
     var node = _agentFindNode(params.target);
     if (!node) throw new Error("Node not found: " + params.target);
 
     var m = params.matrix;
-    if (!m || m.length < 16) throw new Error("matrix must be 16 floats (row-major)");
+    if (!m || m.length < 16) throw new Error("matrix must be 16 floats");
 
-    var worldMatrix = BABYLON.Matrix.FromArray(m);
+    console.log("[SetWorldMatrix] Target: " + params.target);
+    console.log("[SetWorldMatrix] Raw matrix from DCC: [" +
+        m[0].toFixed(3) + ", " + m[1].toFixed(3) + ", " + m[2].toFixed(3) + ", " + m[3].toFixed(3) + ",  " +
+        m[4].toFixed(3) + ", " + m[5].toFixed(3) + ", " + m[6].toFixed(3) + ", " + m[7].toFixed(3) + ",  " +
+        m[8].toFixed(3) + ", " + m[9].toFixed(3) + ", " + m[10].toFixed(3) + ", " + m[11].toFixed(3) + ",  " +
+        m[12].toFixed(3) + ", " + m[13].toFixed(3) + ", " + m[14].toFixed(3) + ", " + m[15].toFixed(3) + "]");
 
-    // If node has a parent, compute local matrix = world * inverse(parentWorld)
-    if (node.parent) {
-        var parentWorld = node.parent.getWorldMatrix();
-        var parentInv = BABYLON.Matrix.Identity();
-        parentWorld.invertToRef(parentInv);
-        var localMatrix = worldMatrix.multiply(parentInv);
-        localMatrix.decompose(node.scaling, node.rotationQuaternion, node.position);
-    } else {
-        // No parent: world = local
-        if (!node.rotationQuaternion) {
-            node.rotationQuaternion = BABYLON.Quaternion.Identity();
-        }
-        worldMatrix.decompose(node.scaling, node.rotationQuaternion, node.position);
+    // Log current node state before change
+    console.log("[SetWorldMatrix] BEFORE - pos: " + _vecStr(node.position) +
+        " rot: " + (node.rotationQuaternion ? _quatStr(node.rotationQuaternion) : _vecStr(node.rotation)) +
+        " scale: " + _vecStr(node.scaling));
+    console.log("[SetWorldMatrix] Parent: " + (node.parent ? node.parent.name : "none"));
+
+    // Create matrix from the raw array
+    var localMatrix = BABYLON.Matrix.FromArray(m);
+
+    // Decompose into position, rotation (quaternion), scale
+    var newScale = new BABYLON.Vector3();
+    var newRotation = new BABYLON.Quaternion();
+    var newPosition = new BABYLON.Vector3();
+
+    var success = localMatrix.decompose(newScale, newRotation, newPosition);
+    console.log("[SetWorldMatrix] Decompose success: " + success);
+    console.log("[SetWorldMatrix] Decomposed pos: " + _vecStr(newPosition));
+    console.log("[SetWorldMatrix] Decomposed rot (quat): " + _quatStr(newRotation));
+    console.log("[SetWorldMatrix] Decomposed scale: " + _vecStr(newScale));
+
+    // Apply decomposed values
+    node.position.copyFrom(newPosition);
+    node.scaling.copyFrom(newScale);
+    if (!node.rotationQuaternion) {
+        node.rotationQuaternion = new BABYLON.Quaternion();
     }
+    node.rotationQuaternion.copyFrom(newRotation);
+
+    console.log("[SetWorldMatrix] AFTER - pos: " + _vecStr(node.position) +
+        " rot: " + _quatStr(node.rotationQuaternion) +
+        " scale: " + _vecStr(node.scaling));
+}
+
+function _vecStr(v) {
+    if (!v) return "(null)";
+    return "(" + (v.x || 0).toFixed(3) + ", " + (v.y || 0).toFixed(3) + ", " + (v.z || 0).toFixed(3) + ")";
+}
+
+function _quatStr(q) {
+    if (!q) return "(null)";
+    return "(" + (q.x || 0).toFixed(3) + ", " + (q.y || 0).toFixed(3) + ", " + (q.z || 0).toFixed(3) + ", " + (q.w || 0).toFixed(3) + ")";
 }
 
 // ---------------------------------------------------------------------------
