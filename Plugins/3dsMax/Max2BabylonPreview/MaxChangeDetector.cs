@@ -59,7 +59,7 @@ namespace Max2BabylonPreview
                     {
                         var handle = node.Handle.ToString();
                         _selectedHandles.Add(handle);
-                        _cachedMatrices[handle] = ReadWorldMatrixForBabylon(node);
+                        _cachedMatrices[handle] = ReadLocalMatrixForBabylon(node);
                     }
                 }
             }
@@ -92,7 +92,7 @@ namespace Max2BabylonPreview
                 {
                     var node = FindNodeByHandle(h);
                     if (node != null)
-                        _cachedMatrices[h] = ReadWorldMatrixForBabylon(node);
+                        _cachedMatrices[h] = ReadLocalMatrixForBabylon(node);
                 }
                 OnSelectionChanged?.Invoke();
                 return;
@@ -105,7 +105,7 @@ namespace Max2BabylonPreview
                 var node = FindNodeByHandle(handle);
                 if (node == null) continue;
 
-                var current = ReadWorldMatrixForBabylon(node);
+                var current = ReadLocalMatrixForBabylon(node);
                 if (!_cachedMatrices.TryGetValue(handle, out var cached))
                 {
                     _cachedMatrices[handle] = current;
@@ -128,57 +128,54 @@ namespace Max2BabylonPreview
         }
 
         /// <summary>
-        /// Reads the node's world transform matrix and converts it from
-        /// Max's Z-up right-hand to Babylon's Y-up left-hand coordinate system.
-        /// Returns a 16-element array in row-major order for Babylon's Matrix.FromArray().
+        /// Reads the node's LOCAL transform matrix (relative to parent).
+        /// Returns 16 elements matching Babylon's Matrix.FromArray() layout.
+        /// NO coordinate conversion — the glTF root node handles Z-up to Y-up.
         /// </summary>
-        private static double[] ReadWorldMatrixForBabylon(IINode node)
+        private static double[] ReadLocalMatrixForBabylon(IINode node)
         {
-            var tm = node.GetNodeTM(0, null);
+            var worldTM = node.GetNodeTM(0, null);
+            IMatrix3 localTM;
 
-            // Max matrix rows: Row0=X-axis, Row1=Y-axis, Row2=Z-axis, Row3=Translation
-            var r0 = tm.GetRow(0); // X axis
-            var r1 = tm.GetRow(1); // Y axis (Max)
-            var r2 = tm.GetRow(2); // Z axis (Max)
-            var r3 = tm.GetRow(3); // Translation
+            if (node.ParentNode != null && !node.ParentNode.IsRootNode)
+            {
+                var parentTM = node.ParentNode.GetNodeTM(0, null);
+                localTM = worldTM;
+                // local = world * inverse(parent)
+                var parentInv = parentTM;
+                parentInv.Invert();
+                localTM = Multiply(worldTM, parentInv);
+            }
+            else
+            {
+                localTM = worldTM;
+            }
 
-            // Convert from Max (Z-up, right-hand) to Babylon (Y-up, left-hand):
-            // Babylon X = Max X
-            // Babylon Y = Max Z
-            // Babylon Z = -Max Y (negate for handedness flip)
-            //
-            // Babylon Matrix.FromArray expects ROW-MAJOR but Babylon stores column-major.
-            // Actually, Babylon's Matrix.FromArray reads in column-major order.
-            // So we fill: [m0,m1,m2,m3, m4,m5,m6,m7, m8,m9,m10,m11, m12,m13,m14,m15]
-            // = [col0, col1, col2, col3] where col0 = first column
-
-            // Column 0 (Babylon X-axis) = Max X-axis with Y↔Z swap and Z negate
-            double c0x = r0.X;
-            double c0y = r0.Z;
-            double c0z = -r0.Y;
-
-            // Column 1 (Babylon Y-axis) = Max Z-axis with Y↔Z swap and Z negate
-            double c1x = r2.X;
-            double c1y = r2.Z;
-            double c1z = -r2.Y;
-
-            // Column 2 (Babylon Z-axis) = -Max Y-axis with Y↔Z swap and Z negate
-            double c2x = -r1.X;
-            double c2y = -r1.Z;
-            double c2z = r1.Y;
-
-            // Column 3 (Translation) = position with Y↔Z swap and Z negate
-            double c3x = r3.X;
-            double c3y = r3.Z;
-            double c3z = -r3.Y;
+            // Max IMatrix3 rows → Babylon column-major layout
+            // Row0=X-axis, Row1=Y-axis, Row2=Z-axis, Row3=Translation
+            var r0 = localTM.GetRow(0);
+            var r1 = localTM.GetRow(1);
+            var r2 = localTM.GetRow(2);
+            var r3 = localTM.GetRow(3);
 
             return new double[]
             {
-                c0x, c0y, c0z, 0,
-                c1x, c1y, c1z, 0,
-                c2x, c2y, c2z, 0,
-                c3x, c3y, c3z, 1
+                r0.X, r0.Y, r0.Z, 0,
+                r1.X, r1.Y, r1.Z, 0,
+                r2.X, r2.Y, r2.Z, 0,
+                r3.X, r3.Y, r3.Z, 1
             };
+        }
+
+        private static IMatrix3 Multiply(IMatrix3 a, IMatrix3 b)
+        {
+            var result = Loader.Global.Matrix3.Create();
+            result.SetRow(0, a.GetRow(0));
+            result.SetRow(1, a.GetRow(1));
+            result.SetRow(2, a.GetRow(2));
+            result.SetRow(3, a.GetRow(3));
+            result.MultiplyBy(b);
+            return result;
         }
 
         private static bool ArrayEqual(double[] a, double[] b)
