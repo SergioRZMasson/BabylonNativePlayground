@@ -1,0 +1,6 @@
+# SDK DLLs (proprietary - see Refs/README.md)
+Refs/*.dll
+
+# Build output
+Max2BabylonPreview/2026/bin/
+Max2BabylonPreview/2026/obj/

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Max2BabylonPreview</AssemblyName>
+    <RootNamespace>Max2BabylonPreview</RootNamespace>
+    <DefineConstants>$(DefineConstants);MAX2026</DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- SDK References -->
+  <ItemGroup>
+    <Reference Include="Autodesk.Max">
+      <HintPath>..\..\Refs\Autodesk.Max.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ManagedServices">
+      <HintPath>..\..\Refs\ManagedServices.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- NuGet Packages -->
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- Source files from parent directory -->
+  <ItemGroup>
+    <Compile Include="..\Descriptor.cs" Link="Descriptor.cs" />
+    <Compile Include="..\Loader.cs" Link="Loader.cs" />
+    <Compile Include="..\GlobalUtility.cs" Link="GlobalUtility.cs" />
+  </ItemGroup>
+
+  <!-- LivePreview Shared Projects -->
+  <Import Project="..\..\..\SharedProjects\LivePreview.Protocol\LivePreview.Protocol.projitems" Label="Shared" />
+  <Import Project="..\..\..\SharedProjects\LivePreview.ObjectMapping\LivePreview.ObjectMapping.projitems" Label="Shared" />
+  <Import Project="..\..\..\SharedProjects\LivePreview.Core\LivePreview.Core.projitems" Label="Shared" />
+
+</Project>
