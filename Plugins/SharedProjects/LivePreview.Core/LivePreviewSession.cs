@@ -66,6 +66,7 @@ namespace LivePreview.Core
 
                 await Client.ClearSceneAsync().ConfigureAwait(false);
                 await Client.LoadGlbDataAsync(base64, "scene.glb").ConfigureAwait(false);
+                await Client.EnsureDefaultLightsAsync().ConfigureAwait(false);
 
                 var sceneData = await Client.QuerySceneAsync().ConfigureAwait(false);
 

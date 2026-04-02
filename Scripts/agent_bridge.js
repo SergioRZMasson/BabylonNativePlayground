@@ -168,6 +168,10 @@ function _agentHandleCommand(request) {
             case "handshake":
                 _agentSend({ id: id, success: true });
                 break;
+            case "ensure_default_lights":
+                _agentCmdEnsureDefaultLights();
+                _agentSend({ id: id, success: true });
+                break;
             default:
                 _agentSend({ id: id, success: false, error: "Unknown command: " + command });
         }
@@ -638,6 +642,15 @@ function _agentCmdRemoveNode(params) {
     var name = node.name;
     node.dispose();
     return { removed: name };
+}
+
+// ensure_default_lights: add a hemispheric light if scene has no lights
+function _agentCmdEnsureDefaultLights() {
+    if (!currentScene) throw new Error("No scene loaded");
+    if (currentScene.lights && currentScene.lights.length > 0) return;
+
+    var light = new BABYLON.HemisphericLight("_defaultLight", new BABYLON.Vector3(0, 1, 0), currentScene);
+    light.intensity = 1.0;
 }
 
 // ---------------------------------------------------------------------------

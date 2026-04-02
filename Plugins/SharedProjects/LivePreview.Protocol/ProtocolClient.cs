@@ -101,5 +101,10 @@ namespace LivePreview.Protocol
             var p = new JObject { ["target"] = target };
             return SendCommandAsync(ProtocolConstants.CmdRemoveNode, p);
         }
+
+        public Task EnsureDefaultLightsAsync()
+        {
+            return SendCommandAsync("ensure_default_lights");
+        }
     }
 }

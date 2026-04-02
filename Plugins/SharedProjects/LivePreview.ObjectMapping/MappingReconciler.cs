@@ -13,14 +13,6 @@ namespace LivePreview.ObjectMapping
             ReconcileArray(map, querySceneData["transformNodes"] as JArray, false, logger);
             ReconcileArray(map, querySceneData["lights"] as JArray, false, logger);
             ReconcileArray(map, querySceneData["cameras"] as JArray, false, logger);
-
-            foreach (var entry in map.AllEntries)
-            {
-                if (entry.BabylonUniqueId < 0)
-                {
-                    logger?.Invoke($"[MappingReconciler] Warning: No renderer match for DCC object '{entry.DccId}' (expected Babylon name '{entry.BabylonName}')");
-                }
-            }
         }
 
         private static void ReconcileArray(ObjectMap map, JArray nodes, bool updateTopology, Action<string> logger)
@@ -49,10 +41,6 @@ namespace LivePreview.ObjectMapping
                         entry.LastVertexCount = verts;
                         entry.LastIndexCount = indices;
                     }
-                }
-                else
-                {
-                    logger?.Invoke($"[MappingReconciler] Info: Renderer node '{name}' (uid={uniqueId}) has no DCC mapping");
                 }
             }
         }
