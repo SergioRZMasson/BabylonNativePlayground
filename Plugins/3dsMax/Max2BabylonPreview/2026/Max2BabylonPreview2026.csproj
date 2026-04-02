@@ -42,6 +42,8 @@
     <Compile Include="..\MaxSceneExporter.cs" Link="MaxSceneExporter.cs" />
     <Compile Include="..\MaxObjectMapper.cs" Link="MaxObjectMapper.cs" />
     <Compile Include="..\MaxLivePreviewSession.cs" Link="MaxLivePreviewSession.cs" />
+    <Compile Include="..\MaxChangeDetector.cs" Link="MaxChangeDetector.cs" />
+    <Compile Include="..\MaxMaterialMapper.cs" Link="MaxMaterialMapper.cs" />
   </ItemGroup>
 
   <!-- LivePreview Shared Projects -->
