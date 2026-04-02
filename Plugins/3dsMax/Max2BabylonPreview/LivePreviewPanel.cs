@@ -101,16 +101,27 @@ namespace Max2BabylonPreview
             _session = new MaxLivePreviewSession(port, rendererPath);
             _session.OnStateChanged += OnSessionStateChanged;
             _session.OnError += OnSessionError;
+            _session.OnRendererConnected += OnRendererConnected;
+
+            _session.StartServerAndLaunchRenderer();
+        }
+
+        private async void OnRendererConnected()
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(OnRendererConnected));
+                return;
+            }
 
             try
             {
-                await _session.StartAsync();
+                await _session.ExportAndSendSceneAsync();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to start preview: {ex.Message}", "Error",
+                MessageBox.Show($"Failed to send scene: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
-                ResetUI();
             }
         }
 
@@ -120,7 +131,7 @@ namespace Max2BabylonPreview
             {
                 try
                 {
-                    await _session.StopAsync();
+                    _session.Stop();
                 }
                 catch { /* best effort */ }
                 _session = null;
@@ -188,9 +199,8 @@ namespace Max2BabylonPreview
         {
             if (_session != null && _session.State != SessionState.Disconnected)
             {
-                e.Cancel = true;
-                OnStopClick(this, EventArgs.Empty);
-                return;
+                _session.Stop();
+                _session = null;
             }
             base.OnFormClosing(e);
         }

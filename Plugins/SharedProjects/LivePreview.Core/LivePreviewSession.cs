@@ -13,7 +13,6 @@ namespace LivePreview.Core
         private readonly string _rendererPath;
         private WebSocketServer _server;
         private RendererProcess _renderer;
-        private TaskCompletionSource<bool> _connectionTcs;
 
         public SessionState State { get; private set; } = SessionState.Disconnected;
         public ObjectMap Map { get; } = new ObjectMap();
@@ -22,6 +21,7 @@ namespace LivePreview.Core
 
         public event Action<SessionState> OnStateChanged;
         public event Action<string> OnError;
+        public event Action OnRendererConnected;
 
         protected LivePreviewSession(int port, string rendererPath)
         {
@@ -32,48 +32,62 @@ namespace LivePreview.Core
         protected abstract Task<byte[]> ExportSceneToGlbAsync();
         protected abstract void PopulateObjectMap(ObjectMap map);
 
-        public async Task StartAsync()
+        public void StartServerAndLaunchRenderer()
         {
             try
             {
                 SetState(SessionState.StartingServer);
                 _server = new WebSocketServer();
                 Client = new ProtocolClient(_server);
-                _connectionTcs = new TaskCompletionSource<bool>();
 
-                _server.OnConnected += () => _connectionTcs.TrySetResult(true);
+                _server.OnConnected += HandleConnected;
                 _server.OnDisconnected += HandleDisconnect;
                 _server.Start(_port);
 
                 SetState(SessionState.WaitingForRenderer);
                 _renderer = new RendererProcess(_rendererPath);
                 _renderer.Start($"ws://127.0.0.1:{_port}");
+            }
+            catch (Exception ex)
+            {
+                SetState(SessionState.Error);
+                OnError?.Invoke($"Failed to start: {ex.Message}");
+            }
+        }
 
-                var connected = await WaitWithTimeout(_connectionTcs.Task, 10000, "Renderer did not connect within 10 seconds").ConfigureAwait(false);
+        public async Task ExportAndSendSceneAsync()
+        {
+            try
+            {
+                SetState(SessionState.Exporting);
 
-                SetState(SessionState.Handshaking);
-                // The renderer sends a handshake automatically on connect (Task 1.2).
-                // We give it a brief moment then proceed.
-                await Task.Delay(500).ConfigureAwait(false);
+                var glbBytes = await ExportSceneToGlbAsync().ConfigureAwait(false);
+                var base64 = Convert.ToBase64String(glbBytes);
 
-                await ExportAndLoadScene().ConfigureAwait(false);
+                await Client.ClearSceneAsync().ConfigureAwait(false);
+                await Client.LoadGlbDataAsync(base64, "scene.glb").ConfigureAwait(false);
+
+                var sceneData = await Client.QuerySceneAsync().ConfigureAwait(false);
+
+                Map.Clear();
+                PopulateObjectMap(Map);
+                MappingReconciler.Reconcile(Map, sceneData, msg => OnError?.Invoke(msg));
 
                 SetState(SessionState.Streaming);
             }
             catch (Exception ex)
             {
                 SetState(SessionState.Error);
-                OnError?.Invoke(ex.Message);
-                throw;
+                OnError?.Invoke($"Export/load failed: {ex.Message}");
             }
         }
 
-        public async Task StopAsync()
+        public void Stop()
         {
             SetState(SessionState.Stopping);
 
-            _server?.Stop();
-            _renderer?.Stop();
+            try { _server?.Stop(); } catch { }
+            try { _renderer?.Stop(); } catch { }
 
             _server = null;
             _renderer = null;
@@ -84,21 +98,10 @@ namespace LivePreview.Core
             SetState(SessionState.Disconnected);
         }
 
-        private async Task ExportAndLoadScene()
+        private void HandleConnected()
         {
-            SetState(SessionState.Exporting);
-
-            var glbBytes = await ExportSceneToGlbAsync().ConfigureAwait(false);
-            var base64 = Convert.ToBase64String(glbBytes);
-
-            await Client.ClearSceneAsync().ConfigureAwait(false);
-            await Client.LoadGlbDataAsync(base64, "scene.glb").ConfigureAwait(false);
-
-            var sceneData = await Client.QuerySceneAsync().ConfigureAwait(false);
-
-            Map.Clear();
-            PopulateObjectMap(Map);
-            MappingReconciler.Reconcile(Map, sceneData, msg => OnError?.Invoke(msg));
+            SetState(SessionState.Handshaking);
+            OnRendererConnected?.Invoke();
         }
 
         private async void HandleDisconnect()
@@ -127,16 +130,8 @@ namespace LivePreview.Core
 
                 if (_server != null && _server.IsConnected)
                 {
-                    try
-                    {
-                        await ExportAndLoadScene().ConfigureAwait(false);
-                        SetState(SessionState.Streaming);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        OnError?.Invoke($"Re-sync failed: {ex.Message}");
-                    }
+                    await ExportAndSendSceneAsync().ConfigureAwait(false);
+                    return;
                 }
             }
 
@@ -148,19 +143,6 @@ namespace LivePreview.Core
         {
             State = state;
             OnStateChanged?.Invoke(state);
-        }
-
-        private static async Task<T> WaitWithTimeout<T>(Task<T> task, int timeoutMs, string message)
-        {
-            using (var cts = new CancellationTokenSource(timeoutMs))
-            {
-                var delayTask = Task.Delay(timeoutMs, cts.Token);
-                var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
-                if (completed == delayTask)
-                    throw new TimeoutException(message);
-                cts.Cancel();
-                return await task.ConfigureAwait(false);
-            }
         }
     }
 }
