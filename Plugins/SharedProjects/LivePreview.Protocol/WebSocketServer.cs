@@ -123,7 +123,7 @@ namespace LivePreview.Protocol
                         continue;
                     }
 
-                    var wsContext = await context.AcceptWebSocketAsync("babylon-preview").ConfigureAwait(false);
+                    var wsContext = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
                     _webSocket = wsContext.WebSocket;
                     OnConnected?.Invoke();
 
