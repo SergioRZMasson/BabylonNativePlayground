@@ -26,6 +26,11 @@ function _agentConnect() {
         _agentWs.onopen = function () {
             _agentConnected = true;
             console.log("[AgentBridge] Connected to agent server at " + _agentWsUrl);
+            _agentSend({
+                id: "handshake",
+                command: "handshake",
+                params: { type: "renderer", version: "1.0" }
+            });
         };
 
         _agentWs.onmessage = function (evt) {
@@ -143,6 +148,25 @@ function _agentHandleCommand(request) {
                 break;
             case "ping":
                 _agentSend({ id: id, success: true, data: "pong" });
+                break;
+            case "clear_scene":
+                _agentCmdClearScene();
+                _agentSend({ id: id, success: true });
+                break;
+            case "update_geometry":
+                _agentCmdUpdateGeometry(params);
+                _agentSend({ id: id, success: true });
+                break;
+            case "remove_node":
+                var rmResult = _agentCmdRemoveNode(params);
+                _agentSend({ id: id, success: true, data: rmResult });
+                break;
+            case "add_node":
+                var addResult = _agentCmdCreatePrimitive(params);
+                _agentSend({ id: id, success: true, data: addResult });
+                break;
+            case "handshake":
+                _agentSend({ id: id, success: true });
                 break;
             default:
                 _agentSend({ id: id, success: false, error: "Unknown command: " + command });
@@ -548,6 +572,72 @@ function _agentCmdCreatePrimitive(params) {
         type: type,
         position: _agentVec3(mesh.position)
     };
+}
+
+// clear_scene: dispose all scene content and recreate a default camera
+function _agentCmdClearScene() {
+    if (!currentScene) throw new Error("No scene loaded");
+
+    var i;
+    var items;
+
+    items = currentScene.animationGroups.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.skeletons.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.meshes.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.transformNodes.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.lights.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.materials.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    items = currentScene.textures.slice();
+    for (i = 0; i < items.length; i++) { try { items[i].dispose(); } catch (e) {} }
+
+    currentScene.createDefaultCamera(true, true, true);
+}
+
+// update_geometry: { target, positions (required), normals, uvs, indices }
+function _agentCmdUpdateGeometry(params) {
+    if (!currentScene) throw new Error("No scene loaded");
+    var mesh = _agentFindNode(params.target);
+    if (!mesh) throw new Error("Node not found: " + params.target);
+    if (!mesh.updateVerticesData) throw new Error("Target is not a mesh: " + params.target);
+
+    if (!params.positions) throw new Error("positions array is required");
+    mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, new Float32Array(params.positions));
+
+    if (params.normals && mesh.isVerticesDataPresent(BABYLON.VertexBuffer.NormalKind)) {
+        mesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, new Float32Array(params.normals));
+    }
+
+    if (params.uvs && mesh.isVerticesDataPresent(BABYLON.VertexBuffer.UVKind)) {
+        mesh.updateVerticesData(BABYLON.VertexBuffer.UVKind, new Float32Array(params.uvs));
+    }
+
+    if (params.indices) {
+        mesh.setIndices(params.indices);
+    }
+
+    mesh.refreshBoundingInfo();
+}
+
+// remove_node: { target }
+function _agentCmdRemoveNode(params) {
+    if (!currentScene) throw new Error("No scene loaded");
+    var node = _agentFindNode(params.target);
+    if (!node) throw new Error("Node not found: " + params.target);
+    var name = node.name;
+    node.dispose();
+    return { removed: name };
 }
 
 // ---------------------------------------------------------------------------
