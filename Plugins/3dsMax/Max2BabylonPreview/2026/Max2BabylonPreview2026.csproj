@@ -7,17 +7,22 @@
     <RootNamespace>Max2BabylonPreview</RootNamespace>
     <DefineConstants>$(DefineConstants);MAX2026</DefineConstants>
     <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
   <!-- SDK References -->
   <ItemGroup>
     <Reference Include="Autodesk.Max">
-      <HintPath>..\..\Refs\Autodesk.Max.dll</HintPath>
+      <HintPath>..\..\Refs\Autodesk.Max.new.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="ManagedServices">
       <HintPath>..\..\Refs\ManagedServices.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UiViewModels">
+      <HintPath>..\..\Refs\UiViewModels.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

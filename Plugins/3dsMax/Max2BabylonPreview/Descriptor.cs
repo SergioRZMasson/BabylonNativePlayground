@@ -18,5 +18,7 @@ namespace Max2BabylonPreview
         public override IClass_ID ClassID => Loader.Class_ID;
 
         public override string Category => "Babylon";
+
+        public override string NonLocalizedClassName => "Babylon Live Preview";
     }
 }

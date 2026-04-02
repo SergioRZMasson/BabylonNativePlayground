@@ -11,7 +11,9 @@ namespace Max2BabylonPreview
             var mtl = node.Mtl;
             if (mtl == null) return props;
 
-            var className = mtl.ClassName;
+            string className = "";
+            try { mtl.GetClassName(ref className, false); }
+            catch { return props; }
 
             if (className == "Standard" || className == "Standardmaterial")
             {
