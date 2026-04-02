@@ -11,7 +11,7 @@
 var _agentWs = null;
 var _agentReconnectTimer = null;
 var _agentConnected = false;
-var _agentWsUrl = "ws://127.0.0.1:8765";
+var _agentWsUrl = (typeof __nativeAgentWsUrl !== 'undefined') ? __nativeAgentWsUrl : "ws://127.0.0.1:8765";
 var _agentReconnectInterval = 3000;
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <cstring>
 #include <mutex>
 #include <vector>
 #include <algorithm>
@@ -65,6 +66,9 @@ static std::vector<uint8_t> s_pendingCmdBuffer;
 static std::mutex s_codeSyncMutex;
 static std::string s_pendingCode;
 static bool s_codeSyncDirty = false;
+
+// WebSocket URL (configurable via --ws-url command-line argument)
+static std::string s_wsUrl = "ws://127.0.0.1:8765";
 
 // UI components
 static SceneInspector::Inspector s_inspector;
@@ -408,7 +412,7 @@ static void Uninitialize()
     device.reset();
 }
 
-static void Initialize(SDL_Window* window)
+static void Initialize(SDL_Window* window, const std::string& wsUrl)
 {
     Uninitialize();
 
@@ -428,7 +432,7 @@ static void Initialize(SDL_Window* window)
 
     runtime = std::make_unique<Babylon::AppRuntime>();
 
-    runtime->Dispatch([](Napi::Env env) {
+    runtime->Dispatch([wsUrl](Napi::Env env) {
         device->AddToJavaScript(env);
 
         Babylon::Polyfills::Console::Initialize(env, [](const char* message, auto) {
@@ -456,6 +460,10 @@ static void Initialize(SDL_Window* window)
         env.Global().Set("_nativeApplySubstance",
             Napi::Function::New(env, NativeApplySubstance));
 #endif
+
+        // Set WebSocket URL for agent_bridge.js (configurable via --ws-url)
+        env.Global().Set("__nativeAgentWsUrl",
+            Napi::String::New(env, wsUrl));
 
         auto context = &Babylon::Graphics::DeviceContext::GetFromJavaScript(env);
         ImGui_ImplBabylon_SetContext(context);
@@ -499,6 +507,15 @@ static int MapMouseButton(Uint8 button)
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
+    // Parse command-line arguments
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--ws-url") == 0 && i + 1 < argc)
+        {
+            s_wsUrl = argv[++i];
+        }
+    }
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
@@ -532,7 +549,7 @@ int main(int argc, char* argv[])
     ImGui_ImplSDL3_InitForOther(window);
 
     // Initialize Babylon
-    Initialize(window);
+    Initialize(window, s_wsUrl);
 
 #ifdef HAS_SUBSTANCE_SDK
     s_substanceImporter.SetGraphicsDevice(&device.value());
@@ -589,7 +606,7 @@ int main(int argc, char* argv[])
                     if (event.key.key == SDLK_F1)
                         s_showImgui = !s_showImgui;
                     if (event.key.key == SDLK_R && (event.key.mod & SDL_KMOD_CTRL))
-                        Initialize(window);
+                        Initialize(window, s_wsUrl);
                     break;
 
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
