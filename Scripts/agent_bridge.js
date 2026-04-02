@@ -172,6 +172,10 @@ function _agentHandleCommand(request) {
                 _agentCmdEnsureDefaultLights();
                 _agentSend({ id: id, success: true });
                 break;
+            case "set_world_matrix":
+                _agentCmdSetWorldMatrix(params);
+                _agentSend({ id: id, success: true });
+                break;
             default:
                 _agentSend({ id: id, success: false, error: "Unknown command: " + command });
         }
@@ -651,6 +655,35 @@ function _agentCmdEnsureDefaultLights() {
 
     var light = new BABYLON.HemisphericLight("_defaultLight", new BABYLON.Vector3(0, 1, 0), currentScene);
     light.intensity = 1.0;
+}
+
+// set_world_matrix: { target, matrix: [16 floats, row-major] }
+// Sets the node's transform from a world-space 4x4 matrix.
+// The matrix must already be in Babylon's Y-up left-hand coordinate system.
+function _agentCmdSetWorldMatrix(params) {
+    if (!currentScene) throw new Error("No scene loaded");
+    var node = _agentFindNode(params.target);
+    if (!node) throw new Error("Node not found: " + params.target);
+
+    var m = params.matrix;
+    if (!m || m.length < 16) throw new Error("matrix must be 16 floats (row-major)");
+
+    var worldMatrix = BABYLON.Matrix.FromArray(m);
+
+    // If node has a parent, compute local matrix = world * inverse(parentWorld)
+    if (node.parent) {
+        var parentWorld = node.parent.getWorldMatrix();
+        var parentInv = BABYLON.Matrix.Identity();
+        parentWorld.invertToRef(parentInv);
+        var localMatrix = worldMatrix.multiply(parentInv);
+        localMatrix.decompose(node.scaling, node.rotationQuaternion, node.position);
+    } else {
+        // No parent: world = local
+        if (!node.rotationQuaternion) {
+            node.rotationQuaternion = BABYLON.Quaternion.Identity();
+        }
+        worldMatrix.decompose(node.scaling, node.rotationQuaternion, node.position);
+    }
 }
 
 // ---------------------------------------------------------------------------

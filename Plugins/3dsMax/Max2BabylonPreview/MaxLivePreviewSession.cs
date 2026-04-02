@@ -64,9 +64,7 @@ namespace Max2BabylonPreview
             StopChangeDetection();
 
             _changeDetector = new MaxChangeDetector();
-            _changeDetector.OnPositionChanged += HandlePositionChanged;
-            _changeDetector.OnRotationChanged += HandleRotationChanged;
-            _changeDetector.OnScaleChanged += HandleScaleChanged;
+            _changeDetector.OnWorldMatrixChanged += HandleWorldMatrixChanged;
             _changeDetector.Start(Map);
         }
 
@@ -79,41 +77,32 @@ namespace Max2BabylonPreview
             }
         }
 
-        private void HandlePositionChanged(string dccId, double[] position)
+        private void HandleWorldMatrixChanged(string dccId, double[] matrix)
         {
-            if (!Throttler.ShouldSend(dccId + "_pos")) return;
+            if (!Throttler.ShouldSend(dccId)) return;
             var babylonName = Map.GetBabylonName(dccId);
             if (babylonName == null) return;
-            _ = SendTransformSafe(babylonName, "position", position);
+            _ = SendWorldMatrixSafe(babylonName, matrix);
         }
 
-        private void HandleRotationChanged(string dccId, double[] rotation)
-        {
-            if (!Throttler.ShouldSend(dccId + "_rot")) return;
-            var babylonName = Map.GetBabylonName(dccId);
-            if (babylonName == null) return;
-            _ = SendTransformSafe(babylonName, "rotation", rotation);
-        }
-
-        private void HandleScaleChanged(string dccId, double[] scale)
-        {
-            if (!Throttler.ShouldSend(dccId + "_scl")) return;
-            var babylonName = Map.GetBabylonName(dccId);
-            if (babylonName == null) return;
-            _ = SendTransformSafe(babylonName, "scaling", scale);
-        }
-
-        private async Task SendTransformSafe(string target, string property, double[] value)
+        private async Task SendWorldMatrixSafe(string target, double[] matrix)
         {
             try
             {
                 if (Client != null)
-                    await Client.SetTransformAsync(target, property, value);
+                {
+                    var p = new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["target"] = target,
+                        ["matrix"] = new Newtonsoft.Json.Linq.JArray(matrix)
+                    };
+                    await Client.SendCommandAsync("set_world_matrix", p);
+                }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[MaxLivePreview] Transform send failed: {ex.Message}");
+                    $"[MaxLivePreview] World matrix send failed: {ex.Message}");
             }
         }
     }

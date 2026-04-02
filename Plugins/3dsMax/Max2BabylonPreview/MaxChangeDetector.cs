@@ -8,13 +8,12 @@ namespace Max2BabylonPreview
     {
         private System.Timers.Timer _pollTimer;
         private HashSet<string> _selectedHandles = new HashSet<string>();
-        private Dictionary<string, CachedTransform> _cachedTransforms = new Dictionary<string, CachedTransform>();
+        private Dictionary<string, double[]> _cachedMatrices = new Dictionary<string, double[]>();
         private LivePreview.ObjectMapping.ObjectMap _map;
         private bool _active;
 
-        public event Action<string, double[]> OnPositionChanged;
-        public event Action<string, double[]> OnRotationChanged;
-        public event Action<string, double[]> OnScaleChanged;
+        // Fires with (dccId, 16-element world matrix in Babylon Y-up left-hand coords)
+        public event Action<string, double[]> OnWorldMatrixChanged;
         public event Action<string> OnGeometryChanged;
         public event Action<string> OnMaterialChanged;
         public event Action OnSelectionChanged;
@@ -42,13 +41,13 @@ namespace Max2BabylonPreview
                 _pollTimer = null;
             }
             _selectedHandles.Clear();
-            _cachedTransforms.Clear();
+            _cachedMatrices.Clear();
         }
 
         public void UpdateSelection()
         {
             _selectedHandles.Clear();
-            _cachedTransforms.Clear();
+            _cachedMatrices.Clear();
 
             try
             {
@@ -60,22 +59,18 @@ namespace Max2BabylonPreview
                     {
                         var handle = node.Handle.ToString();
                         _selectedHandles.Add(handle);
-                        _cachedTransforms[handle] = ReadTransform(node);
+                        _cachedMatrices[handle] = ReadWorldMatrixForBabylon(node);
                     }
                 }
             }
-            catch { /* safe fallback */ }
+            catch { }
         }
 
         private void OnPollTick(object sender, System.Timers.ElapsedEventArgs e)
         {
             if (!_active) return;
-
-            try
-            {
-                PollSelectedNodes();
-            }
-            catch { /* swallow polling errors to avoid crashing timer */ }
+            try { PollSelectedNodes(); }
+            catch { }
         }
 
         private void PollSelectedNodes()
@@ -92,12 +87,12 @@ namespace Max2BabylonPreview
             if (!currentHandles.SetEquals(_selectedHandles))
             {
                 _selectedHandles = currentHandles;
-                _cachedTransforms.Clear();
+                _cachedMatrices.Clear();
                 foreach (var h in _selectedHandles)
                 {
                     var node = FindNodeByHandle(h);
                     if (node != null)
-                        _cachedTransforms[h] = ReadTransform(node);
+                        _cachedMatrices[h] = ReadWorldMatrixForBabylon(node);
                 }
                 OnSelectionChanged?.Invoke();
                 return;
@@ -110,27 +105,17 @@ namespace Max2BabylonPreview
                 var node = FindNodeByHandle(handle);
                 if (node == null) continue;
 
-                var current = ReadTransform(node);
-                if (!_cachedTransforms.TryGetValue(handle, out var cached))
+                var current = ReadWorldMatrixForBabylon(node);
+                if (!_cachedMatrices.TryGetValue(handle, out var cached))
                 {
-                    _cachedTransforms[handle] = current;
+                    _cachedMatrices[handle] = current;
                     continue;
                 }
 
-                if (!ArrayEqual(current.Position, cached.Position))
+                if (!ArrayEqual(current, cached))
                 {
-                    _cachedTransforms[handle] = current;
-                    OnPositionChanged?.Invoke(handle, current.Position);
-                }
-                else if (!ArrayEqual(current.Rotation, cached.Rotation))
-                {
-                    _cachedTransforms[handle] = current;
-                    OnRotationChanged?.Invoke(handle, current.Rotation);
-                }
-                else if (!ArrayEqual(current.Scale, cached.Scale))
-                {
-                    _cachedTransforms[handle] = current;
-                    OnScaleChanged?.Invoke(handle, current.Scale);
+                    _cachedMatrices[handle] = current;
+                    OnWorldMatrixChanged?.Invoke(handle, current);
                 }
             }
         }
@@ -138,52 +123,62 @@ namespace Max2BabylonPreview
         private IINode FindNodeByHandle(string handle)
         {
             if (!uint.TryParse(handle, out var h)) return null;
-            try
-            {
-                return Loader.Core.GetINodeByHandle(h);
-            }
+            try { return Loader.Core.GetINodeByHandle(h); }
             catch { return null; }
         }
 
-        private static CachedTransform ReadTransform(IINode node)
+        /// <summary>
+        /// Reads the node's world transform matrix and converts it from
+        /// Max's Z-up right-hand to Babylon's Y-up left-hand coordinate system.
+        /// Returns a 16-element array in row-major order for Babylon's Matrix.FromArray().
+        /// </summary>
+        private static double[] ReadWorldMatrixForBabylon(IINode node)
         {
-            var pos = node.ObjOffsetPos;
-            var nodePos = node.GetNodeTM(0, null).GetRow(3);
+            var tm = node.GetNodeTM(0, null);
 
-            return new CachedTransform
+            // Max matrix rows: Row0=X-axis, Row1=Y-axis, Row2=Z-axis, Row3=Translation
+            var r0 = tm.GetRow(0); // X axis
+            var r1 = tm.GetRow(1); // Y axis (Max)
+            var r2 = tm.GetRow(2); // Z axis (Max)
+            var r3 = tm.GetRow(3); // Translation
+
+            // Convert from Max (Z-up, right-hand) to Babylon (Y-up, left-hand):
+            // Babylon X = Max X
+            // Babylon Y = Max Z
+            // Babylon Z = -Max Y (negate for handedness flip)
+            //
+            // Babylon Matrix.FromArray expects ROW-MAJOR but Babylon stores column-major.
+            // Actually, Babylon's Matrix.FromArray reads in column-major order.
+            // So we fill: [m0,m1,m2,m3, m4,m5,m6,m7, m8,m9,m10,m11, m12,m13,m14,m15]
+            // = [col0, col1, col2, col3] where col0 = first column
+
+            // Column 0 (Babylon X-axis) = Max X-axis with Y↔Z swap and Z negate
+            double c0x = r0.X;
+            double c0y = r0.Z;
+            double c0z = -r0.Y;
+
+            // Column 1 (Babylon Y-axis) = Max Z-axis with Y↔Z swap and Z negate
+            double c1x = r2.X;
+            double c1y = r2.Z;
+            double c1z = -r2.Y;
+
+            // Column 2 (Babylon Z-axis) = -Max Y-axis with Y↔Z swap and Z negate
+            double c2x = -r1.X;
+            double c2y = -r1.Z;
+            double c2z = r1.Y;
+
+            // Column 3 (Translation) = position with Y↔Z swap and Z negate
+            double c3x = r3.X;
+            double c3y = r3.Z;
+            double c3z = -r3.Y;
+
+            return new double[]
             {
-                Position = ConvertPosition(nodePos.X, nodePos.Y, nodePos.Z),
-                Rotation = ReadRotationDeg(node),
-                Scale = ReadScale(node)
+                c0x, c0y, c0z, 0,
+                c1x, c1y, c1z, 0,
+                c2x, c2y, c2z, 0,
+                c3x, c3y, c3z, 1
             };
-        }
-
-        public static double[] ConvertPosition(float mx, float my, float mz)
-        {
-            return new double[] { mx, mz, -my };
-        }
-
-        private static double[] ReadRotationDeg(IINode node)
-        {
-            var tm = node.GetNodeTM(0, null);
-            var rot = tm.GetRow(0);
-            // Simplified: extract euler angles from transform matrix
-            // For a proper implementation, decompose the matrix using AffineParts
-            return new double[] { 0, 0, 0 };
-        }
-
-        private static double[] ReadScale(IINode node)
-        {
-            var tm = node.GetNodeTM(0, null);
-            var sx = Length(tm.GetRow(0));
-            var sy = Length(tm.GetRow(1));
-            var sz = Length(tm.GetRow(2));
-            return new double[] { sx, sz, sy };
-        }
-
-        private static float Length(IPoint3 v)
-        {
-            return (float)Math.Sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z);
         }
 
         private static bool ArrayEqual(double[] a, double[] b)
@@ -194,13 +189,6 @@ namespace Max2BabylonPreview
                 if (Math.Abs(a[i] - b[i]) > 0.0001) return false;
             }
             return true;
-        }
-
-        private class CachedTransform
-        {
-            public double[] Position;
-            public double[] Rotation;
-            public double[] Scale;
         }
     }
 }
